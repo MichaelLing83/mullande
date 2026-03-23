@@ -1,0 +1,46 @@
+[project]
+name = "mullande"
+version = "0.1.0"
+description = "A large model Agent system"
+readme = "README.md"
+license = "MIT"
+authors = [
+  { name = "michael", email = "michael@example.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+  "click>=8.0",
+  # Add other dependencies here for LLM Agent system
+  "openai>=1.0",
+  "anthropic>=0.7",
+  "pydantic>=2.0",
+  "rich>=13.0",
+]
+
+[project.scripts]
+mullande = "mullande.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "project"
+
+[tool.hatch.envs.default]
+dependencies = [
+  "pytest",
+  "pytest-cov",
+]
+
+[tool.hatch.envs.lint]
+dependencies = [
+  "ruff",
+]
+
+[tool.uv]
+dev-dependencies = [
+  "black>=23.0",
+  "ruff>=0.1",
+  "mypy>=1.0",
+]
