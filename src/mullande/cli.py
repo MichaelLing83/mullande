@@ -12,7 +12,10 @@ from mullande.agent import AgentSystem
 from mullande.workspace import WorkspaceManager
 
 
-@click.group(invoke_without_command=True)
+@click.group(
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 @click.version_option(version=__version__)
 @click.option(
     "--config", "-c", type=click.Path(exists=True), help="Path to configuration file"
