@@ -3,12 +3,17 @@
 
 from mullande.workspace import Memory, WorkspaceManager
 import pytest
+import shutil
 
 
 def test_basic_read_write():
     """Test basic read and write operations"""
     # Reset to clean state for testing
     workspace = WorkspaceManager()
+    # Ensure clean state
+    if workspace.mullande_dir.exists():
+        shutil.rmtree(workspace.mullande_dir)
+    workspace.initialize()
     m = Memory(workspace)
 
     # Test initial state
@@ -34,6 +39,10 @@ def test_basic_read_write():
 def test_atomic_rollback_on_failure():
     """Test that all changes are rolled back on failure"""
     workspace = WorkspaceManager()
+    # Ensure clean state
+    if workspace.mullande_dir.exists():
+        shutil.rmtree(workspace.mullande_dir)
+    workspace.initialize()
     m = Memory(workspace)
 
     # Count files before
@@ -62,7 +71,12 @@ def test_atomic_rollback_on_failure():
 
 def test_single_write():
     """Test single file write"""
-    m = Memory()
+    workspace = WorkspaceManager()
+    # Ensure clean state
+    if workspace.mullande_dir.exists():
+        shutil.rmtree(workspace.mullande_dir)
+    workspace.initialize()
+    m = Memory(workspace)
     success = m.write_one("single.txt", "Single file content", "Add single file")
     assert success is True
     assert m.read("single.txt") == "Single file content"

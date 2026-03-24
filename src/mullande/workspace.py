@@ -36,7 +36,23 @@ class WorkspaceManager:
         if not (self.memory_dir / ".git").exists():
             # Need to initialize git repo
             subprocess.run(
-                ["git", "init"], cwd=self.memory_dir, capture_output=True, check=True
+                ["git", "init"],
+                cwd=str(self.memory_dir),
+                capture_output=True,
+                check=True,
+            )
+            # Set default user config for git if not set
+            subprocess.run(
+                ["git", "config", "user.name", "mullande"],
+                cwd=str(self.memory_dir),
+                capture_output=True,
+                check=False,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "mullande@localhost"],
+                cwd=str(self.memory_dir),
+                capture_output=True,
+                check=False,
             )
             # Create .gitignore to exclude unnecessary files
             gitignore = self.memory_dir / ".gitignore"
@@ -67,14 +83,17 @@ Thumbs.db
     def git_add(self, path: str) -> None:
         """Add a file to git in the memory repo"""
         subprocess.run(
-            ["git", "add", path], cwd=self.memory_dir, capture_output=True, check=True
+            ["git", "add", path],
+            cwd=str(self.memory_dir),
+            capture_output=True,
+            check=True,
         )
 
     def git_commit(self, message: str) -> None:
         """Commit changes in the memory repo"""
         subprocess.run(
             ["git", "commit", "-m", message],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             check=True,
         )
@@ -83,7 +102,7 @@ Thumbs.db
         """Get git log from memory repo"""
         result = subprocess.run(
             ["git", "log", "--oneline"],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             text=True,
             check=True,
@@ -94,7 +113,7 @@ Thumbs.db
         """Stash current changes"""
         subprocess.run(
             ["git", "stash"],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             check=True,
         )
@@ -103,7 +122,7 @@ Thumbs.db
         """Pop stashed changes"""
         subprocess.run(
             ["git", "stash", "pop"],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             check=True,
         )
@@ -112,7 +131,7 @@ Thumbs.db
         """Checkout HEAD to discard changes"""
         subprocess.run(
             ["git", "checkout", "--", "."],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             check=True,
         )
@@ -121,7 +140,7 @@ Thumbs.db
         """Check if there are uncommitted changes"""
         result = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             text=True,
             check=True,
@@ -169,7 +188,7 @@ class Memory:
         """Get current HEAD commit hash"""
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             text=True,
             check=True,
@@ -214,7 +233,7 @@ class Memory:
             # Rollback all changes to original commit
             subprocess.run(
                 ["git", "reset", "--hard", original_head],
-                cwd=self.memory_dir,
+                cwd=str(self.memory_dir),
                 capture_output=True,
                 check=True,
             )
@@ -232,7 +251,7 @@ class Memory:
         """List all tracked files in memory"""
         result = subprocess.run(
             ["git", "ls-files"],
-            cwd=self.memory_dir,
+            cwd=str(self.memory_dir),
             capture_output=True,
             text=True,
             check=True,
