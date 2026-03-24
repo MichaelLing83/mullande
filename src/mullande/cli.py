@@ -4,6 +4,7 @@ mullande - Large Model Agent System command line interface
 
 import click
 import sys
+from pathlib import Path
 from typing import Optional
 
 from mullande import __version__
@@ -47,8 +48,14 @@ def run(model: Optional[str], prompt: Optional[str], input: Optional[str]) -> No
     """Run the Agent system with the given input"""
     agent = AgentSystem(model=model)
     if input:
-        with open(input, "r") as f:
-            content = f.read()
+        # Check if input is a file that exists
+        input_path = Path(input)
+        if input_path.exists() and input_path.is_file():
+            with open(input_path, "r") as f:
+                content = f.read()
+        else:
+            # Treat as direct string input
+            content = input
         result = agent.process(content)
         click.echo(result)
     elif prompt:
@@ -63,7 +70,9 @@ def run(model: Optional[str], prompt: Optional[str], input: Optional[str]) -> No
             result = agent.process(content)
             click.echo(result)
         else:
-            click.echo("Please provide input via argument, --prompt, or stdin")
+            click.echo(
+                "Please provide input via argument (file or text), --prompt, or stdin"
+            )
 
 
 @main.command()
