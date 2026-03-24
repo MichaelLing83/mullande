@@ -6,6 +6,8 @@ import time
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 import ollama
+from rich.console import Console
+from rich.table import Table
 
 from mullande.config import get_config, Config, ModelConfig
 from mullande.performance import PerformanceCollector
@@ -31,13 +33,20 @@ class AgentSystem:
     @property
     def effective_model_id(self) -> str:
         """Get effective model ID"""
-        if self.requested_model and self.model_config.model_id:
-            return self.model_config.model_id
-        if self.requested_model:
-            return self.requested_model
-        if self.model_config.model_id:
-            return self.model_config.model_id
-        return "unknown"
+        if self.requested_model is None:
+            # Using default model
+            if self.model_config.model_id:
+                return self.model_config.model_id
+            return "unknown"
+        # If model is requested explicitly and model_config has explicit model_id, use that
+        # Otherwise (model not configured) use the requested name itself
+        if (
+            self.config.data.models
+            and self.requested_model in self.config.data.models
+            and self.config.data.models[self.requested_model].model_id
+        ):
+            return self.config.data.models[self.requested_model].model_id
+        return self.requested_model
 
     def get_api_key(self) -> Optional[str]:
         """Get API key from environment as configured"""
