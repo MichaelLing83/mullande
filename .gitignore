@@ -1,3 +1,7 @@
 .mullande
 __pycache__
 .coverage
+
+# Added by cargo
+
+/target
