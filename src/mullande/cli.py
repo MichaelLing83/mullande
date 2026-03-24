@@ -39,7 +39,18 @@ def main(ctx: click.Context, config: Optional[str]) -> None:
         # Default behavior when no subcommand is provided
         click.echo(f"mullande v{__version__} - Large Model Agent System")
         click.echo()
-        click.echo("Use 'mullande --help' to see available commands")
+        click.echo("Use 'mullande --help' or 'mullande -h' to see available commands")
+        click.echo()
+        click.echo("To enable shell autocompletion:")
+        click.echo(
+            "  Bash:  echo 'eval \"\\$\\(_MULLANDE_COMPLETE=bash_source mullande\\)\"' >> ~/.bashrc"
+        )
+        click.echo(
+            "  Zsh:   echo 'eval \"\\$\\(_MULLANDE_COMPLETE=zsh_source mullande\\)\"' >> ~/.zshrc"
+        )
+        click.echo(
+            "  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish"
+        )
         sys.exit(0)
 
 
