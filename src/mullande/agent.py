@@ -119,11 +119,154 @@ class AgentSystem:
         """Start an interactive chat session"""
         # Placeholder for interactive chat implementation
         import readline
+        from rich.console import Console
+        from rich.table import Table
+        from mullande import __version__
 
+        console = Console()
         try:
             while True:
                 prompt = input("You > ")
+                prompt = prompt.strip()
+
+                # Handle special commands starting with /
+                if prompt.startswith("/"):
+                    self._handle_special_command(prompt, console)
+                    continue
+
                 response = self.process(prompt)
                 print(f"Agent > {response}")
         except KeyboardInterrupt:
             print("\nExiting chat...")
+
+    def _handle_special_command(self, cmd: str, console) -> None:
+        """Handle special chat commands starting with /"""
+        parts = cmd.split(maxsplit=1)
+        command = parts[0].lower()
+
+        if command == "/models":
+            self._cmd_list_models(console)
+        elif command == "/model":
+            if len(parts) < 2:
+                print("Agent > Usage: /model <model_name>")
+                print(f"Agent > Current model: {self.effective_model_id}")
+            else:
+                self._cmd_switch_model(parts[1], console)
+        elif command == "/stats":
+            from mullande.performance import PerformanceCollector
+
+            collector = PerformanceCollector()
+
+            # Show system information
+            sys_info = collector.get_system_info_cached()
+            if sys_info:
+                console.print("\n[bold blue]System Information[/bold blue]")
+                os_info = f"{sys_info['os']['name']} {sys_info['os']['release']} ({sys_info['os']['architecture']})"
+                cpu_info = f"{sys_info['cpu']['physical_cores']} physical / {sys_info['cpu']['logical_cores']} logical cores"
+                mem_info = f"{sys_info['memory']['total_gb']} GB total"
+                ollama_ver = sys_info.get("ollama_version", "Unknown")
+
+                print(f"  OS: {os_info}")
+                print(f"  CPU: {cpu_info}")
+                print(f"  Memory: {mem_info}")
+                print(f"  Ollama version: {ollama_ver}")
+                print()
+
+            # Get all models with performance data
+            models = collector.list_models_with_data()
+            if not models:
+                print("Agent > [yellow]No performance data collected yet.[/yellow]")
+                return
+
+            # Create table
+            table = Table(title="Performance Statistics by Model")
+            table.add_column("Model", style="cyan")
+            table.add_column("Calls", justify="right", style="green")
+            table.add_column("Avg Duration", justify="right", style="white")
+            table.add_column("Tokens/sec", justify="right", style="magenta")
+            table.add_column("Avg Input Chars", justify="right", style="blue")
+            table.add_column("Avg Output Chars", justify="right", style="blue")
+
+            total_calls_all = 0
+            for model_name in sorted(models):
+                stats = collector.get_model_stats(model_name)
+                if stats:
+                    table.add_row(
+                        model_name,
+                        str(stats["total_calls"]),
+                        f"{stats['avg_duration_seconds']}s",
+                        f"{stats['avg_tokens_per_second']}",
+                        f"{stats['avg_input_chars']}",
+                        f"{stats['avg_output_chars']}",
+                    )
+                    total_calls_all += stats["total_calls"]
+
+            console.print(table)
+            console.print(
+                f"\n[bold]Total recorded calls across all models: {total_calls_all}[/bold]"
+            )
+        elif command == "/version":
+            print(f"Agent > mullande version: {__version__}")
+        elif command == "/config":
+            from mullande.config import get_config
+
+            config = get_config()
+            print("Agent > Current configuration:")
+            print(str(config))
+        else:
+            print(f"Agent > Unknown command: {command}")
+            print(
+                "Agent > Available commands: /models, /model <name>, /stats, /version, /config"
+            )
+
+    def _cmd_list_models(self, console) -> None:
+        """List all configured models"""
+        default_model = self.effective_model_id
+        models_list = []
+
+        # Add default model
+        models_list.append(
+            (
+                self.config.data.model.model_id,
+                self.config.data.model.provider,
+                "*default*",
+            )
+        )
+
+        # Add additional models
+        if self.config.data.models:
+            for name, model_config in self.config.data.models.items():
+                models_list.append((name, model_config.provider, ""))
+
+        table = Table(title="Configured Models")
+        table.add_column("Model", style="cyan")
+        table.add_column("Provider", style="green")
+        table.add_column("Default", style="yellow")
+
+        for name, provider, is_default in sorted(models_list):
+            table.add_row(name, provider, is_default)
+
+        console.print(table)
+        print(f"\nCurrent active model: [bold cyan]{default_model}[/bold cyan]")
+
+    def _cmd_switch_model(self, model_name: str, console) -> None:
+        """Switch to a different model"""
+        # Check if model exists in configuration
+        if self.config.data.models and model_name in self.config.data.models:
+            self.requested_model = model_name
+            self.model_config = self.config.get_model_config(model_name)
+            console.print(f"✅ Switched to model: [bold cyan]{model_name}[/bold cyan]")
+        elif model_name == self.config.data.model.model_id:
+            # Already the default
+            self.requested_model = None
+            self.model_config = self.config.get_model_config(None)
+            console.print(
+                f"✅ Switched to default model: [bold cyan]{model_name}[/bold cyan]"
+            )
+        else:
+            # Use it even if not explicitly configured
+            self.requested_model = model_name
+            self.model_config = self.config.get_model_config(model_name)
+            console.print(
+                f"✅ Switched to model: [bold cyan]{model_name}[/bold cyan] (not in configuration, using default provider settings)"
+            )
