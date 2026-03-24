@@ -2,10 +2,9 @@
 Core Agent system implementation for mullande
 """
 
-import json
-import httpx
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
+import ollama
 
 from mullande.config import get_config, Config, ModelConfig
 
@@ -72,29 +71,38 @@ class AgentSystem:
             return f"Unknown provider: {provider}"
 
     def _call_ollama(self, prompt: str, model: str, context_window: int) -> str:
-        """Call ollama API with the given prompt"""
-        base_url = self.model_config.base_url or "http://localhost:11434"
-        api_url = f"{base_url.rstrip('/')}/api/generate"
+        """Call ollama using official Python API"""
+        options = {"num_ctx": context_window} if context_window > 0 else {}
+        base_url = self.model_config.base_url
 
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"num_ctx": context_window},
-        }
+        client_kwargs = {}
+        if base_url:
+            client_kwargs["base_url"] = base_url
 
-        headers = {}
         api_key = self.get_api_key()
         if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+            client_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
 
         try:
-            response = httpx.post(api_url, json=payload, headers=headers, timeout=None)
-            response.raise_for_status()
-            data = response.json()
-            return data.get("response", "No response from model")
-        except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            return f"Error connecting to ollama at {api_url}: {e}\nPlease ensure ollama is running and the model '{model}' is pulled.\nHint: Run 'ollama pull {model}' to download the model first."
+            if client_kwargs:
+                # Create custom client if we have custom options
+                client = ollama.Client(**client_kwargs)
+                response = client.chat(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    options=options,
+                )
+            else:
+                # Use default client
+                response = ollama.chat(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    options=options,
+                )
+
+            return response["message"]["content"]
+        except Exception as e:
+            return f"Error connecting to ollama: {e}\nPlease ensure ollama is running and the model '{model}' is pulled.\nHint: Run 'ollama pull {model}' to download the model first."
 
     def start_chat(self) -> None:
         """Start an interactive chat session"""
