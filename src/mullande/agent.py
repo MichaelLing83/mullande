@@ -2,11 +2,13 @@
 Core Agent system implementation for mullande
 """
 
+import time
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 import ollama
 
 from mullande.config import get_config, Config, ModelConfig
+from mullande.performance import PerformanceCollector
 
 
 class AgentResponse(BaseModel):
@@ -83,6 +85,7 @@ class AgentSystem:
         if api_key:
             client_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
 
+        start_time = time.time()
         try:
             if client_kwargs:
                 # Create custom client if we have custom options
@@ -100,8 +103,16 @@ class AgentSystem:
                     options=options,
                 )
 
-            return response["message"]["content"]
+            result = response["message"]["content"]
+            duration = time.time() - start_time
+
+            # Record performance data
+            collector = PerformanceCollector()
+            collector.record_call(model, prompt, result, duration)
+
+            return result
         except Exception as e:
+            duration = time.time() - start_time
             return f"Error connecting to ollama: {e}\nPlease ensure ollama is running and the model '{model}' is pulled.\nHint: Run 'ollama pull {model}' to download the model first."
 
     def start_chat(self) -> None:

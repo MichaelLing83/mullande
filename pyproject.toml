@@ -17,6 +17,7 @@ dependencies = [
   "rich>=13.0",
   "jsonschema>=4.0",
   "ollama>=0.2",
+  "psutil>=5.9",
 ]
 
 [project.scripts]
