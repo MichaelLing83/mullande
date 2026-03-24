@@ -12,6 +12,8 @@ from rich.table import Table
 from mullande import __version__
 from mullande.config import get_config, Config, ModelConfig
 from mullande.performance import PerformanceCollector
+from mullande.workspace import Memory
+from datetime import datetime, timezone
 
 
 class AgentResponse(BaseModel):
@@ -68,19 +70,22 @@ class AgentSystem:
         api_key = self.get_api_key()
 
         if provider == "ollama":
-            return self._call_ollama(input_text, model_id, context_window)
+            result = self._call_ollama(input_text, model_id, context_window)
         elif provider in ["volcengine", "copilot"]:
             # Will implement these providers later
-            response = f"Provider {provider} not implemented yet.\n"
-            response += f"Configuration:\n"
-            response += f"- Provider: {provider}\n"
-            response += f"- Model: {model_id}\n"
-            response += f"- Context window: {context_window}\n"
+            result = f"Provider {provider} not implemented yet.\n"
+            result += f"Configuration:\n"
+            result += f"- Provider: {provider}\n"
+            result += f"- Model: {model_id}\n"
+            result += f"- Context window: {context_window}\n"
             if api_key:
-                response += "- API key loaded from environment: ✓\n"
-            return response
+                result += "- API key loaded from environment: ✓\n"
         else:
-            return f"Unknown provider: {provider}"
+            result = f"Unknown provider: {provider}"
+
+        # Save conversation to memory
+        self._save_conversation(input_text, result, model_id)
+        return result
 
     def _call_ollama(self, prompt: str, model: str, context_window: int) -> str:
         """Call ollama using official Python API"""
@@ -294,3 +299,32 @@ class AgentSystem:
             console.print(
                 f"✅ Switched to model: [bold cyan]{model_name}[/bold cyan] (not in configuration, using default provider settings)"
             )
+
+    def _save_conversation(
+        self, user_input: str, agent_response: str, model: str
+    ) -> None:
+        """Save conversation turn to CONVERSATIONS.md"""
+        memory = Memory()
+        conversation_path = "CONVERSATIONS.md"
+
+        # Build content to append
+        timestamp = datetime.now(timezone.utc).isoformat()
+        entry = f"\n\n---\n\n**[{timestamp}]** Model: `{model}`\n\n**User:** {user_input}\n\n**Agent:** {agent_response}\n"
+
+        # Read existing content if file exists
+        existing_content = ""
+        if memory.exists(conversation_path):
+            existing_content = memory.read(conversation_path)
+        else:
+            # Initialize file with header
+            existing_content = "# Mullande Conversation Log\n\nThis file stores all conversations from mullande run and mullande chat.\n"
+
+        # Append new entry
+        new_content = existing_content + entry
+
+        # Save atomically via memory API
+        memory.write_one(
+            conversation_path,
+            new_content,
+            f"Add conversation turn using model {model}: {len(user_input)} chars input",
+        )
