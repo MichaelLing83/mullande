@@ -53,7 +53,13 @@ class PerformanceCollector:
                 ["ollama", "--version"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
-                ollama_version = result.stdout.strip().split()[1]
+                parts = result.stdout.strip().split()
+                # Output format: "ollama version is 0.18.2"
+                if len(parts) >= 4:
+                    ollama_version = parts[3]
+                elif len(parts) >= 2:
+                    # Fallback for other formats
+                    ollama_version = parts[-1]
         except Exception:
             pass
 
