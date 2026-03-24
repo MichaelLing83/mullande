@@ -47,13 +47,23 @@ def run(model: Optional[str], prompt: Optional[str], input: Optional[str]) -> No
     """Run the Agent system with the given input"""
     agent = AgentSystem(model=model)
     if input:
-        result = agent.process(input)
+        with open(input, "r") as f:
+            content = f.read()
+        result = agent.process(content)
         click.echo(result)
     elif prompt:
         result = agent.process(prompt)
         click.echo(result)
     else:
-        click.echo("Please provide input via argument or --prompt option")
+        # Read from stdin
+        import sys
+
+        content = sys.stdin.read()
+        if content:
+            result = agent.process(content)
+            click.echo(result)
+        else:
+            click.echo("Please provide input via argument, --prompt, or stdin")
 
 
 @main.command()

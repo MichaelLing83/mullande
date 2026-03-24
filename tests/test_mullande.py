@@ -1,6 +1,7 @@
 """
 Tests for mullande
 """
+
 from mullande import __version__
 from mullande.agent import AgentSystem
 
@@ -12,4 +13,4 @@ def test_version():
 def test_agent_process():
     agent = AgentSystem()
     response = agent.process("Hello world")
-    assert "Hello world" in response.content
+    assert "Hello world" in response
