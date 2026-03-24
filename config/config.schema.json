@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "mullande Configuration",
+  "description": "Configuration schema for mullande project",
+  "type": "object",
+  "properties": {
+    "model": {
+      "description": "Default model configuration",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["ollama", "volcengine", "copilot"],
+          "description": "Model provider"
+        },
+        "model_id": {
+          "type": "string",
+          "description": "Model identifier"
+        },
+        "base_url": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Base URL for the API endpoint (for ollama)"
+        },
+        "context_window": {
+          "anyOf": [{"type": "integer"}, {"type": "null"}],
+          "minimum": 1,
+          "description": "Maximum context window size for this model"
+        },
+        "api_key_env": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "description": "Environment variable name containing API key (authentication information must come from environment variables)"
+        }
+      },
+      "required": ["provider"],
+      "additionalProperties": false
+    },
+    "models": {
+      "description": "Map of model ID to its configuration overrides",
+      "type": ["object", "null"],
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["ollama", "volcengine", "copilot"],
+            "description": "Model provider"
+          },
+           "base_url": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "description": "Base URL for the API endpoint (for ollama)"
+          },
+          "context_window": {
+            "anyOf": [{"type": "integer"}, {"type": "null"}],
+            "minimum": 1,
+            "description": "Maximum context window size for this model"
+          },
+          "api_key_env": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "description": "Environment variable name containing API key (authentication information must come from environment variables)"
+          }
+        },
+        "required": ["provider"],
+        "additionalProperties": false
+      }
+    },
+    "global_context_window": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Default global context window size for all models"
+    }
+  },
+  "required": ["model"],
+  "additionalProperties": false
+}

@@ -66,15 +66,50 @@ def chat() -> None:
 
 @main.command()
 @click.option("--output", "-o", type=click.Path(), help="Export configuration to file")
-def config(output: Optional[str]) -> None:
-    """Show or export current configuration"""
-    from mullande.config import get_config
+@click.option(
+    "--check", is_flag=True, help="Validate configuration file against schema"
+)
+@click.option("--edit", is_flag=True, help="Interactively edit configuration")
+@click.pass_context
+def config(ctx: click.Context, output: Optional[str], check: bool, edit: bool) -> None:
+    """Show, validate, or interactively edit configuration"""
+    from mullande.config import get_config, validate_config, create_config_interactive
+
+    if check:
+        config = get_config()
+        errors = validate_config(config.to_dict())
+        if errors:
+            click.echo("Configuration validation failed:")
+            for error in errors:
+                click.echo(f"  - {error}")
+            ctx.exit(code=1)
+        else:
+            click.echo("✅ Configuration is valid")
+        return
+
+    if edit or not get_config().config_path.exists():
+        if not get_config().config_path.exists():
+            click.echo(
+                "Configuration file does not exist, starting interactive creation..."
+            )
+        else:
+            click.echo("Starting interactive configuration editing...")
+
+        config = create_config_interactive()
+        click.echo(f"\n✅ Configuration saved to {config.config_path}")
+        click.echo("\nConfiguration:")
+        click.echo(str(config))
+        click.echo(
+            "\nRemember: API keys should be set in your environment variables, not in this file!"
+        )
+        return
 
     config = get_config()
     if output:
         config.save(output)
         click.echo(f"Configuration saved to {output}")
     else:
+        click.echo("Current configuration:")
         click.echo(str(config))
 
 
