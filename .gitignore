@@ -1,2 +1,3 @@
 .mullande
 __pycache__
+.coverage
