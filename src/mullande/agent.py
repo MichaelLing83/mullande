@@ -77,7 +77,7 @@ class AgentSystem:
 
         client_kwargs = {}
         if base_url:
-            client_kwargs["base_url"] = base_url
+            client_kwargs["host"] = base_url
 
         api_key = self.get_api_key()
         if api_key:
