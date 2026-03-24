@@ -9,6 +9,7 @@ import ollama
 from rich.console import Console
 from rich.table import Table
 
+from mullande import __version__
 from mullande.config import get_config, Config, ModelConfig
 from mullande.performance import PerformanceCollector
 
