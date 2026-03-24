@@ -145,7 +145,7 @@ class AgentSystem:
                     continue
 
                 response = self.process(prompt)
-                print(f"Agent > {response}")
+                console.print(f"Agent > {response}")
         except KeyboardInterrupt:
             print("\nExiting chat...")
 
@@ -158,8 +158,10 @@ class AgentSystem:
             self._cmd_list_models(console)
         elif command == "/model":
             if len(parts) < 2:
-                print("Agent > Usage: /model <model_name>")
-                print(f"Agent > Current model: {self.effective_model_id}")
+                console.print("Agent > Usage: [bold]/model <model_name>[/bold]")
+                console.print(
+                    f"Agent > Current model: [bold cyan]{self.effective_model_id}[/bold cyan]"
+                )
             else:
                 self._cmd_switch_model(parts[1], console)
         elif command == "/stats":
@@ -176,16 +178,18 @@ class AgentSystem:
                 mem_info = f"{sys_info['memory']['total_gb']} GB total"
                 ollama_ver = sys_info.get("ollama_version", "Unknown")
 
-                print(f"  OS: {os_info}")
-                print(f"  CPU: {cpu_info}")
-                print(f"  Memory: {mem_info}")
-                print(f"  Ollama version: {ollama_ver}")
-                print()
+                console.print(f"  OS: {os_info}")
+                console.print(f"  CPU: {cpu_info}")
+                console.print(f"  Memory: {mem_info}")
+                console.print(f"  Ollama version: {ollama_ver}")
+                console.print()
 
             # Get all models with performance data
             models = collector.list_models_with_data()
             if not models:
-                print("Agent > [yellow]No performance data collected yet.[/yellow]")
+                console.print(
+                    "Agent > [yellow]No performance data collected yet.[/yellow]"
+                )
                 return
 
             # Create table
@@ -216,17 +220,17 @@ class AgentSystem:
                 f"\n[bold]Total recorded calls across all models: {total_calls_all}[/bold]"
             )
         elif command == "/version":
-            print(f"Agent > mullande version: {__version__}")
+            console.print(f"Agent > mullande version: [bold]{__version__}[/bold]")
         elif command == "/config":
             from mullande.config import get_config
 
             config = get_config()
-            print("Agent > Current configuration:")
-            print(str(config))
+            console.print("Agent > Current configuration:")
+            console.print(str(config))
         else:
-            print(f"Agent > Unknown command: {command}")
-            print(
-                "Agent > Available commands: /models, /model <name>, /stats, /version, /config"
+            console.print(f"Agent > [red]Unknown command: {command}[/red]")
+            console.print(
+                "Agent > Available commands: [bold]/models, /model <name>, /stats, /version, /config[/bold]"
             )
 
     def _cmd_list_models(self, console) -> None:
