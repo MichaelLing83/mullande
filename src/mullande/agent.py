@@ -227,11 +227,21 @@ class AgentSystem:
             config = get_config()
             console.print("Agent > Current configuration:")
             console.print(str(config))
+        elif command == "/help":
+            console.print("Agent > [bold]Available special commands:[/bold]")
+            console.print("  [bold]/models[/bold]          List all configured models")
+            console.print("  [bold]/model <name>[/bold]   Switch to specified model")
+            console.print("  [bold]/stats[/bold]          Show performance statistics")
+            console.print("  [bold]/version[/bold]        Show mullande version")
+            console.print("  [bold]/config[/bold]         Show current configuration")
+            console.print("  [bold]/help[/bold]           Show this help message")
+            console.print("  [bold]/exit[/bold]          Exit interactive chat")
+        elif command == "/exit":
+            console.print("Agent > Exiting chat...")
+            raise KeyboardInterrupt()
         else:
             console.print(f"Agent > [red]Unknown command: {command}[/red]")
-            console.print(
-                "Agent > Available commands: [bold]/models, /model <name>, /stats, /version, /config[/bold]"
-            )
+            console.print("Agent > Type [bold]/help[/bold] to see available commands")
 
     def _cmd_list_models(self, console) -> None:
         """List all configured models"""
