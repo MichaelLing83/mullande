@@ -275,8 +275,7 @@ fn config_command(output: Option<String>, check: bool, edit: bool, import: Optio
     }
 
     if edit {
-        println!("Interactive editing not implemented yet in Rust version");
-        return Ok(());
+        return create_config_interactive(config, workspace);
     }
 
     println!("{}", config.to_json()?);
@@ -364,6 +363,182 @@ fn import_ollama_models(mut config: Config, workspace: &WorkspaceManager) -> Res
             println!("  - {}", name);
         }
     }
+
+    Ok(())
+}
+
+fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -> Result<()> {
+    use dialoguer::{Input, Select, Confirm};
+
+    println!("=== {} Interactive Configuration Creation ===", "mullande".yellow());
+    println!("Note: Authentication information (API keys) should be stored in environment variables,");
+    println!("not in the configuration file. We'll just ask for the environment variable name.\n");
+
+    let providers = vec!["ollama", "volcengine", "copilot"];
+    let provider_idx = Select::new()
+        .with_prompt("Default model provider")
+        .items(&providers)
+        .default(0)
+        .interact()?;
+    let provider = providers[provider_idx].to_string();
+
+    let default_model_id = if provider == "ollama" { "llama3" } else { "" };
+    let model_id: String = Input::new()
+        .with_prompt("Default model ID")
+        .default(default_model_id.to_string())
+        .interact_text()?;
+    let model_id = if model_id.is_empty() { None } else { Some(model_id) };
+
+    let mut base_url = None;
+    if provider == "ollama" {
+        let url: String = Input::new()
+            .with_prompt("Ollama base URL")
+            .default("http://localhost:11434".to_string())
+            .interact_text()?;
+        base_url = Some(url);
+    }
+
+    let mut api_key_env = None;
+    if provider == "volcengine" || provider == "copilot" {
+        let default_env = match provider.as_str() {
+            "volcengine" => "VOLCENGINE_API_KEY",
+            "copilot" => "GITHUB_TOKEN",
+            _ => "",
+        };
+        let env: String = Input::new()
+            .with_prompt("Environment variable containing API key")
+            .default(default_env.to_string())
+            .interact_text()?;
+        api_key_env = if env.is_empty() { None } else { Some(env) };
+    }
+
+    let context_window: Option<u32> = if Confirm::new()
+        .with_prompt("Configure custom context window for default model?")
+        .default(false)
+        .interact()? {
+            let cw: u32 = Input::new()
+                .with_prompt("Context window size")
+                .default(4096)
+                .interact_text()?;
+            Some(cw)
+        } else {
+            None
+        };
+
+    let global_context_window: Option<u32> = if Confirm::new()
+        .with_prompt("Configure global default context window?")
+        .default(false)
+        .interact()? {
+            let cw: u32 = Input::new()
+                .with_prompt("Global context window size")
+                .default(4096)
+                .interact_text()?;
+            Some(cw)
+        } else {
+            None
+        };
+
+    let default_model = ModelConfig {
+        provider,
+        model_id,
+        base_url,
+        context_window,
+        api_key_env,
+    };
+
+    let mut models = config.data.models.take().unwrap_or_default();
+
+    if Confirm::new()
+        .with_prompt("Add additional model configurations?")
+        .default(false)
+        .interact()? {
+            loop {
+                let model_name: String = Input::new()
+                    .with_prompt("Model ID (enter to stop adding)")
+                    .default(String::new())
+                    .interact_text()?;
+                if model_name.is_empty() {
+                    break;
+                }
+
+                println!("Configuring {}:", model_name);
+
+                let p_idx = Select::new()
+                    .with_prompt(format!("Provider for {}", model_name))
+                    .items(&providers)
+                    .default(0)
+                    .interact()?;
+                let p = providers[p_idx].to_string();
+
+                let mid: String = Input::new()
+                    .with_prompt(format!("Model ID for {}", model_name))
+                    .default(String::new())
+                    .interact_text()?;
+                let mid = if mid.is_empty() { None } else { Some(mid) };
+
+                let mut bu = None;
+                if p == "ollama" {
+                    let url: String = Input::new()
+                        .with_prompt(format!("Base URL for {}", model_name))
+                        .default("http://localhost:11434".to_string())
+                        .interact_text()?;
+                    bu = Some(url);
+                }
+
+                let mut ake = None;
+                if p == "volcengine" || p == "copilot" {
+                    let default_de = match p.as_str() {
+                        "volcengine" => "VOLCENGINE_API_KEY",
+                        "copilot" => "GITHUB_TOKEN",
+                        _ => "",
+                    };
+                    let de: String = Input::new()
+                        .with_prompt("Environment variable with API key")
+                        .default(default_de.to_string())
+                        .interact_text()?;
+                    ake = if de.is_empty() { None } else { Some(de) };
+                }
+
+                let cw: Option<u32> = if Confirm::new()
+                    .with_prompt(format!("Custom context window for {}?", model_name))
+                    .default(false)
+                    .interact()? {
+                        let c: u32 = Input::new()
+                            .with_prompt("Context window size")
+                            .default(4096)
+                            .interact_text()?;
+                        Some(c)
+                    } else {
+                        None
+                    };
+
+                models.insert(model_name.clone(), ModelConfig {
+                    provider: p,
+                    model_id: mid,
+                    base_url: bu,
+                    context_window: cw,
+                    api_key_env: ake,
+                });
+
+                if !Confirm::new()
+                    .with_prompt("Add another model?")
+                    .default(false)
+                    .interact()? {
+                    break;
+                }
+            }
+        }
+
+    config.data.model = default_model;
+    config.data.models = if models.is_empty() { None } else { Some(models) };
+    config.data.global_context_window = global_context_window;
+
+    let config_path = workspace.mullande_dir.join("config.json");
+    config.save(Some(&config_path))?;
+
+    println!("\n{} Configuration saved to {}", "✓".green(), config_path.to_string_lossy());
+    println!("\nNew configuration:");
+    println!("{}", config.to_json()?);
 
     Ok(())
 }
