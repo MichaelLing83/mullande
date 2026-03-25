@@ -12,6 +12,8 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     pub options: Option<ChatOptions>,
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub think: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -128,6 +130,7 @@ impl OllamaClient {
              }],
             options,
             stream: Some(true),
+            think: params.thinking,
         };
 
         let url = format!("{}api/chat", self.base_url);
@@ -141,9 +144,9 @@ impl OllamaClient {
             return Err(anyhow!("Ollama API error: {} - {}", status, text));
         }
 
-          let mut full_content = String::new();
-          let mut current_thinking = String::new();
-          let mut thinking_started = false;
+        let mut full_content = String::new();
+        let mut current_thinking = String::new();
+        let mut thinking_started = false;
 
         let reader = io::BufReader::new(response);
         for line in reader.lines() {
@@ -243,6 +246,7 @@ impl OllamaClient {
              }],
             options,
             stream: Some(true),
+            think: params.thinking,
         };
 
         let url = format!("{}api/chat", self.base_url);

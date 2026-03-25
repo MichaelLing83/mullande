@@ -51,6 +51,12 @@ pub enum Commands {
         #[arg(long, help = "Presence penalty; overrides config")]
         presence_penalty: Option<f32>,
 
+        #[arg(long, help = "Enable thinking/reasoning mode; overrides config", conflicts_with = "no_think")]
+        think: bool,
+
+        #[arg(long, help = "Disable thinking/reasoning mode; overrides config", conflicts_with = "think")]
+        no_think: bool,
+
         input: Option<String>,
     },
     /// Show performance statistics collected from previous runs
@@ -100,8 +106,8 @@ pub fn main() -> Result<()> {
              println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
              Ok(())
          }
-          Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, input }) => {
-              run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, input)
+          Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, input }) => {
+              run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, input)
            }
           Some(Commands::Stats) => {
               stats_command()
@@ -118,6 +124,7 @@ pub fn main() -> Result<()> {
 
 fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u64>, verbose: bool,
                temperature: Option<f32>, top_k: Option<u32>, top_p: Option<f32>, presence_penalty: Option<f32>,
+               think: bool, no_think: bool,
                input: Option<String>) -> Result<()> {
     let mut agent = AgentSystem::new(model);
     if let Some(timeout) = timeout {
@@ -125,9 +132,11 @@ fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u6
     }
     agent.set_verbose(verbose);
 
-    let cli_params = ModelParams { temperature, top_k, top_p, presence_penalty };
+    let thinking = if think { Some(true) } else if no_think { Some(false) } else { None };
+    let cli_params = ModelParams { temperature, top_k, top_p, presence_penalty, thinking };
     if cli_params.temperature.is_some() || cli_params.top_k.is_some()
-        || cli_params.top_p.is_some() || cli_params.presence_penalty.is_some() {
+        || cli_params.top_p.is_some() || cli_params.presence_penalty.is_some()
+        || cli_params.thinking.is_some() {
         agent.set_model_params(cli_params);
     }
 
@@ -243,6 +252,7 @@ fn import_ollama_models(mut config: Config, import_cloud: bool, _workspace: &Wor
                 top_k: None,
                 top_p: None,
                 presence_penalty: None,
+                thinking: None,
             });
             added += 1;
         }
@@ -329,6 +339,7 @@ fn import_ollama_models(mut config: Config, import_cloud: bool, _workspace: &Wor
                 top_k: None,
                 top_p: None,
                 presence_penalty: None,
+                thinking: None,
             });
             added += 1;
         }
@@ -434,6 +445,7 @@ fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -
         top_k: None,
         top_p: None,
         presence_penalty: None,
+        thinking: None,
     };
 
     let mut models = config.data.models.take().unwrap_or_default();
@@ -512,6 +524,7 @@ fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -
                     top_k: None,
                     top_p: None,
                     presence_penalty: None,
+                    thinking: None,
                 });
 
                 if !Confirm::new()

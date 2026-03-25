@@ -105,6 +105,7 @@ impl AgentSystem {
             top_k: self.params_override.top_k.or(config_params.top_k),
             top_p: self.params_override.top_p.or(config_params.top_p),
             presence_penalty: self.params_override.presence_penalty.or(config_params.presence_penalty),
+            thinking: self.params_override.thinking.or(config_params.thinking),
         };
 
          // Build full prompt with conversation history

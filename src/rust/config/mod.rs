@@ -12,6 +12,7 @@ pub struct ModelParams {
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
     pub presence_penalty: Option<f32>,
+    pub thinking: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +34,8 @@ pub struct ModelConfig {
     pub top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
 }
 
 impl Default for ModelConfig {
@@ -47,6 +50,7 @@ impl Default for ModelConfig {
             top_k: None,
             top_p: None,
             presence_penalty: None,
+            thinking: None,
         }
     }
 }
@@ -118,6 +122,9 @@ impl Config {
                         if config.presence_penalty.is_some() {
                             merged.presence_penalty = config.presence_penalty;
                         }
+                        if config.thinking.is_some() {
+                            merged.thinking = config.thinking;
+                        }
                         merged
                     } else {
                         self.data.model.clone()
@@ -136,6 +143,7 @@ impl Config {
             top_k: cfg.top_k,
             top_p: cfg.top_p,
             presence_penalty: cfg.presence_penalty,
+            thinking: cfg.thinking,
         }
     }
 
