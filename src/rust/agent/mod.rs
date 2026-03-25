@@ -78,8 +78,6 @@ impl AgentSystem {
     }
 
     pub fn process(&mut self, input_text: &str) -> Result<ProcessResult> {
-        self.conversation_history.push(input_text.to_string());
-
         let provider = self.model_config().provider.clone();
         let model_id = self.effective_model_id();
         let context_window = self.get_context_window();
@@ -101,23 +99,27 @@ impl AgentSystem {
         };
         let duration = start.elapsed().as_secs_f64();
 
-        let result = match result {
-            Ok(r) => r,
-            Err(e) => format!("Error: {}", e),
-        };
+        match result {
+            Ok(result) => {
+                // Only add to conversation history if call succeeded
+                self.conversation_history.push(input_text.to_string());
+                self.conversation_history.push(result.clone());
 
-        // Add assistant response to conversation history
-        self.conversation_history.push(result.clone());
+                let input_tokens = full_prompt.len() / 4;
 
-        let input_tokens = full_prompt.len() / 4;
-
-        self.save_conversation(input_text, &full_prompt, &result, &model_id);
-        Ok(ProcessResult {
-            content: result,
-            model: model_id,
-            input_tokens,
-            duration_seconds: duration,
-        })
+                self.save_conversation(input_text, &full_prompt, &result, &model_id);
+                Ok(ProcessResult {
+                    content: result,
+                    model: model_id,
+                    input_tokens,
+                    duration_seconds: duration,
+                })
+            }
+            Err(e) => {
+                // Do NOT add failed interaction to conversation history
+                Err(e)
+            }
+        }
     }
 
     fn build_full_prompt(&self, _new_input: &str) -> String {

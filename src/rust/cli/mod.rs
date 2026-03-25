@@ -51,8 +51,11 @@ pub enum Commands {
         #[arg(long)]
         edit: bool,
 
-        #[arg(short, long)]
+        #[arg(short, long, help = "Import models from external source: currently only 'ollama' is supported")]
         import: Option<String>,
+
+        #[arg(long, help = "When importing from ollama, interactively select new cloud models to add (don't synchronize, just add selected)")]
+        cloud: bool,
     },
 
     /// Show version information
@@ -91,8 +94,8 @@ pub fn main() -> Result<()> {
         Some(Commands::Chat) => {
             chat_command()
         }
-        Some(Commands::Config { output, check, edit, import }) => {
-            config_command(output, check, edit, import, &workspace)
+        Some(Commands::Config { output, check, edit, import, cloud }) => {
+            config_command(output, check, edit, import, cloud, &workspace)
         }
         Some(Commands::Version) => {
             println!("mullande v{}", env!("CARGO_PKG_VERSION"));
@@ -258,14 +261,14 @@ fn cmd_switch_model(model_name: &str, agent: &mut AgentSystem) {
     println!("{} Switched to model: \x1b[1;36m{}\x1b[0m", "✅".green(), model_name);
 }
 
-fn config_command(output: Option<String>, check: bool, edit: bool, import: Option<String>, workspace: &WorkspaceManager) -> Result<()> {
+fn config_command(output: Option<String>, check: bool, edit: bool, import: Option<String>, cloud: bool, workspace: &WorkspaceManager) -> Result<()> {
     let config = get_config(&workspace.mullande_dir)?;
 
-    if let Some(source) = import {
-        if source == "ollama" {
-            return import_ollama_models(config, workspace);
-        }
-    }
+     if let Some(source) = import {
+         if source == "ollama" {
+             return import_ollama_models(config, cloud, workspace);
+         }
+     }
 
     if let Some(output_path) = output {
         config.save(Some(Path::new(&output_path)))?;
@@ -286,16 +289,18 @@ fn config_command(output: Option<String>, check: bool, edit: bool, import: Optio
     Ok(())
 }
 
-fn import_ollama_models(mut config: Config, _workspace: &WorkspaceManager) -> Result<()> {
+fn import_ollama_models(mut config: Config, import_cloud: bool, _workspace: &WorkspaceManager) -> Result<()> {
+    use dialoguer::MultiSelect;
+
     let base_url = config.data.model.base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
     let api_key = config.get_api_key(None);
     let client = OllamaClient::new(&base_url, api_key);
 
-    println!("{} Fetching models from local ollama...", "→".blue());
-    let local_models = match client.list_models() {
+    println!("{} Fetching models from ollama...", "→".blue());
+    let all_models = match client.list_models() {
         Ok(models) => models,
         Err(e) => {
-            return Err(anyhow!("Failed to fetch models from ollama: {}\nMake sure ollama is running.", e));
+            return Err(anyhow!("Failed to fetch models from ollama: {}\nMake sure ollama is running and accessible.", e));
         }
     };
 
@@ -310,61 +315,125 @@ fn import_ollama_models(mut config: Config, _workspace: &WorkspaceManager) -> Re
     let mut skipped = 0;
     let mut deleted: Vec<String> = Vec::new();
 
-    for model_name in &local_models {
-        if existing_models.contains(model_name) {
-            skipped += 1;
-            continue;
+    // If not cloud mode: import all found models synchronize (delete not found)
+    if !import_cloud {
+        for model_name in &all_models {
+            if existing_models.contains(model_name) {
+                skipped += 1;
+                continue;
+            }
+
+            if config.data.models.is_none() {
+                config.data.models = Some(std::collections::HashMap::new());
+            }
+
+            let models = config.data.models.as_mut().unwrap();
+            models.insert(model_name.clone(), ModelConfig {
+                provider: "ollama".to_string(),
+                model_id: Some(model_name.clone()),
+                base_url: Some(base_url.clone()),
+                context_window: None,
+                api_key_env: None,
+            });
+            added += 1;
         }
 
+        if let Some(models) = &config.data.models {
+            for existing in models.keys() {
+                if !all_models.contains(existing) && !existing.ends_with(":cloud") {
+                    deleted.push(existing.clone());
+                }
+            }
+        }
+
+        if !deleted.is_empty() {
+            if let Some(models) = &mut config.data.models {
+                for name in &deleted {
+                    models.remove(name);
+                }
+            }
+        }
+
+        config.save(None)?;
+
+        let total = if let Some(models) = &config.data.models {
+            models.len()
+        } else {
+            0
+        };
+
+        println!("{} Import complete:", "✓".green());
+        println!("  Added:   {}", added);
+        println!("  Skipped:  {}", skipped);
+        println!("  Deleted:  {}", deleted.len());
+        println!("  Total:    {} models", total + 1);
+
+        if !deleted.is_empty() {
+            println!("\nRemoved models that are no longer present (kept :cloud models):");
+            for name in deleted {
+                println!("  - {}", name);
+            }
+        }
+    } else {
+        // Cloud mode: separate existing into local vs cloud
+        // All models come from the same (cloud) instance, filter new ones and let user select
+        let new_models: Vec<String> = all_models.into_iter()
+            .filter(|m| !existing_models.contains(m))
+            .collect();
+
+        if new_models.is_empty() {
+            println!("{} No new models found on cloud that are not already configured.", "✓".green());
+            return Ok(());
+        }
+
+        println!("\n{} Found {} new models on the cloud ollama server:", "→".blue(), new_models.len());
+        for model in &new_models {
+            println!("  - {}", model);
+        }
+        println!();
+
+        let selected = MultiSelect::new()
+            .with_prompt("Select the models you want to add to configuration (space to toggle, enter to confirm)")
+            .items(&new_models)
+            .interact()?;
+
+        if selected.is_empty() {
+            println!("{} No models selected, nothing changed.", "→".yellow());
+            return Ok(());
+        }
+
+        // Add selected models
         if config.data.models.is_none() {
             config.data.models = Some(std::collections::HashMap::new());
         }
 
         let models = config.data.models.as_mut().unwrap();
-        models.insert(model_name.clone(), ModelConfig {
-            provider: "ollama".to_string(),
-            model_id: Some(model_name.clone()),
-            base_url: Some(base_url.clone()),
-            context_window: None,
-            api_key_env: None,
-        });
-        added += 1;
-    }
-
-    if let Some(models) = &config.data.models {
-        for existing in models.keys() {
-            if !local_models.contains(existing) {
-                deleted.push(existing.clone());
-            }
+        for idx in &selected {
+            let model_name = &new_models[*idx];
+            models.insert(model_name.clone(), ModelConfig {
+                provider: "ollama".to_string(),
+                model_id: Some(model_name.clone()),
+                base_url: Some(base_url.clone()),
+                context_window: None,
+                api_key_env: None,
+            });
+            added += 1;
         }
-    }
 
-    if !deleted.is_empty() {
-        if let Some(models) = &mut config.data.models {
-            for name in &deleted {
-                models.remove(name);
-            }
-        }
-    }
+        config.save(None)?;
 
-    config.save(None)?;
+        let total = if let Some(models) = &config.data.models {
+            models.len()
+        } else {
+            0
+        };
 
-    let total = if let Some(models) = &config.data.models {
-        models.len()
-    } else {
-        0
-    };
-
-    println!("{} Import complete:", "✓".green());
-    println!("  Added:   {}", added);
-    println!("  Skipped:  {}", skipped);
-    println!("  Deleted:  {}", deleted.len());
-    println!("  Total:    {} models", total + 1);
-
-    if !deleted.is_empty() {
-        println!("\nRemoved models that are not present in local ollama:");
-        for name in deleted {
-            println!("  - {}", name);
+        println!("\n{} Import complete:", "✓".green());
+        println!("  Selected: {} models added", added);
+        println!("  Total:    {} models", total + 1);
+        println!("\nAdded models:");
+        for idx in &selected {
+            println!("  + {}", new_models[*idx]);
         }
     }
 
