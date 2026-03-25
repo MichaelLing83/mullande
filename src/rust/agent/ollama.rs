@@ -136,41 +136,49 @@ impl OllamaClient {
                         println!("[debug] Received chunk: {:?}", msg);
                     }
                      if let Some(delta) = &msg.delta {
-                          let content = &delta.content;
-                          full_content.push_str(content);
+                          // Always add content to full response if it exists
+                          if !delta.content.is_empty() {
+                              full_content.push_str(&delta.content);
+                          }
 
-                           // Handle separate thinking field (new Ollama format like qwen3.5)
-                           if let Some(thinking) = &delta.thinking {
-                               current_thinking.push_str(thinking);
-                               // Print with [thinking] prefix on every line
-                               print!("\r\x1b[K");
-                               for line in current_thinking.lines() {
-                                   println!("[thinking] {}", line);
-                               }
-                               io::stdout().flush()?;
-                           }
-                           // Legacy: thinking inside content with <think> tags
-                           else if content.contains("<think>") || !current_thinking.is_empty() {
-                               current_thinking.push_str(content);
-                               // Print with [thinking] prefix on every line
-                               print!("\r\x1b[K");
-                               for line in current_thinking.lines() {
-                                   println!("[thinking] {}", line);
-                               }
-                               io::stdout().flush()?;
-                           }
+                          // Handle separate thinking field (new Ollama format like qwen3.5)
+                          if let Some(thinking) = &delta.thinking {
+                              if !thinking.is_empty() {
+                                  current_thinking.push_str(thinking);
+                                  // Print with [thinking] prefix on every line
+                                  print!("\r\x1b[K");
+                                  for line in current_thinking.lines() {
+                                      println!("[thinking] {}", line);
+                                  }
+                                  io::stdout().flush()?;
+                              }
+                          }
+                          // Legacy: thinking inside content with <think> tags
+                          else if delta.content.contains("<think>") || !current_thinking.is_empty() {
+                              current_thinking.push_str(&delta.content);
+                              // Print with [thinking] prefix on every line
+                              print!("\r\x1b[K");
+                              for line in current_thinking.lines() {
+                                  println!("[thinking] {}", line);
+                              }
+                              io::stdout().flush()?;
+                          }
                       }
                        // Some responses put thinking in message instead of delta
                        if let Some(message) = &msg.message {
+                           // Handle thinking if present
                            if let Some(thinking) = &message.thinking {
-                               current_thinking.push_str(thinking);
-                               // Print with [thinking] prefix on every line
-                               print!("\r\x1b[K");
-                               for line in current_thinking.lines() {
-                                   println!("[thinking] {}", line);
+                               if !thinking.is_empty() {
+                                   current_thinking.push_str(thinking);
+                                   // Print with [thinking] prefix on every line
+                                   print!("\r\x1b[K");
+                                   for line in current_thinking.lines() {
+                                       println!("[thinking] {}", line);
+                                   }
+                                   io::stdout().flush()?;
                                }
-                               io::stdout().flush()?;
                            }
+                           // Always add content to full response if it exists
                            if !message.content.is_empty() {
                                full_content.push_str(&message.content);
                            }
