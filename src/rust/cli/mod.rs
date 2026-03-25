@@ -10,6 +10,7 @@ use prettytable::{Table, Row, Cell};
 use crate::agent::AgentSystem;
 use crate::config::{get_config, Config, ModelConfig};
 use crate::workspace::WorkspaceManager;
+use crate::logging::Logger;
 use crate::agent::ollama::OllamaClient;
 
 #[derive(Parser)]
@@ -68,6 +69,9 @@ pub fn main() -> Result<()> {
         println!("{} {}", "Workspace initialized at".green(), workspace.get_memory_path().to_string_lossy());
         println!();
     }
+    // Initialize logging directory
+    let logger = Logger::new(workspace.clone());
+    let _ = logger.initialize();
 
     match cli.command {
         None => {
@@ -282,7 +286,7 @@ fn config_command(output: Option<String>, check: bool, edit: bool, import: Optio
     Ok(())
 }
 
-fn import_ollama_models(mut config: Config, workspace: &WorkspaceManager) -> Result<()> {
+fn import_ollama_models(mut config: Config, _workspace: &WorkspaceManager) -> Result<()> {
     let base_url = config.data.model.base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
     let api_key = config.get_api_key(None);
     let client = OllamaClient::new(&base_url, api_key);

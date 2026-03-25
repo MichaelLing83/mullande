@@ -2,10 +2,11 @@
 
 use std::time::Instant;
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use crate::config::{Config, ModelConfig};
 use crate::performance::PerformanceCollector;
 use crate::workspace::{WorkspaceManager, Memory};
+use crate::logging::Logger;
 use crate::agent::ollama::OllamaClient;
 
 pub mod ollama;
@@ -33,7 +34,6 @@ impl AgentSystem {
     pub fn new(requested_model: Option<String>) -> Self {
         let workspace = WorkspaceManager::default();
         let config = crate::config::get_config(&workspace.mullande_dir).unwrap();
-        let model_config = config.get_model_config(requested_model.as_deref());
         Self {
             config,
             requested_model,
@@ -83,10 +83,13 @@ impl AgentSystem {
         let context_window = self.get_context_window();
         let api_key = self.get_api_key();
 
+        // Build full prompt with conversation history
+        let full_prompt = self.build_full_prompt(input_text);
+
         let start = std::time::Instant::now();
         let result = match provider.as_str() {
             "ollama" => {
-                self.call_ollama(input_text, &model_id, context_window, api_key)
+                self.call_ollama(&full_prompt, &model_id, context_window, api_key)
             }
             "volcengine" | "copilot" => {
                 Ok(format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
@@ -101,15 +104,40 @@ impl AgentSystem {
             Err(e) => format!("Error: {}", e),
         };
 
-        let input_tokens = input_text.len() / 4;
+        // Add assistant response to conversation history
+        self.conversation_history.push(result.clone());
 
-        self.save_conversation(input_text, &result, &model_id);
+        let input_tokens = full_prompt.len() / 4;
+
+        self.save_conversation(input_text, &full_prompt, &result, &model_id);
         Ok(ProcessResult {
             content: result,
             model: model_id,
             input_tokens,
             duration_seconds: duration,
         })
+    }
+
+    fn build_full_prompt(&self, _new_input: &str) -> String {
+        let mut full = String::new();
+
+        // Build conversation history in a format that works well with LLMs
+        for (i, turn) in self.conversation_history.iter().enumerate() {
+            if i % 2 == 0 {
+                full.push_str("### User:\n");
+            } else {
+                full.push_str("### Assistant:\n");
+            }
+            full.push_str(turn);
+            full.push_str("\n\n");
+        }
+
+        // Add the new input (it's already in conversation_history)
+        if self.conversation_history.len() % 2 == 1 {
+            full.push_str("### Assistant:\n");
+        }
+
+        full.trim_end().to_string()
     }
 
     fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>) -> Result<String> {
@@ -132,7 +160,7 @@ impl AgentSystem {
         Ok(result)
     }
 
-    fn save_conversation(&mut self, user_input: &str, agent_response: &str, model: &str) {
+    fn save_conversation(&mut self, user_input: &str, full_prompt: &str, agent_response: &str, model: &str) {
         let mut memory = Memory::new(None);
         let conversation_path = "CONVERSATIONS.md";
 
@@ -150,5 +178,10 @@ impl AgentSystem {
         let new_content = existing_content + &entry;
         let _ = memory.write_one(conversation_path, &new_content,
             &format!("Add conversation turn using model {}: {} chars input", model, user_input.len()));
+
+        // Log interaction to .mullande/.logs including full prompt
+        let workspace = WorkspaceManager::default();
+        let logger = Logger::new(workspace);
+        let _ = logger.log_interaction(model, user_input, full_prompt, agent_response);
     }
 }

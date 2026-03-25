@@ -5,6 +5,7 @@ mod config;
 mod workspace;
 mod agent;
 mod performance;
+mod logging;
 
 fn main() -> anyhow::Result<()> {
     cli::main()
