@@ -34,6 +34,12 @@ pub enum Commands {
         #[arg(short, long)]
         prompt: Option<String>,
 
+        #[arg(short, long, help = "Timeout in seconds for model response")]
+        timeout: Option<u64>,
+
+        #[arg(short, long, help = "Enable verbose output for debugging")]
+        verbose: bool,
+
         input: Option<String>,
     },
 
@@ -88,9 +94,9 @@ pub fn main() -> Result<()> {
             println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
             Ok(())
         }
-        Some(Commands::Run { model, prompt, input }) => {
-            run_command(model, prompt, input)
-        }
+         Some(Commands::Run { model, prompt, timeout, verbose, input }) => {
+             run_command(model, prompt, timeout, verbose, input)
+         }
         Some(Commands::Chat) => {
             chat_command()
         }
@@ -104,8 +110,12 @@ pub fn main() -> Result<()> {
     }
 }
 
-fn run_command(model: Option<String>, prompt: Option<String>, input: Option<String>) -> Result<()> {
+fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u64>, verbose: bool, input: Option<String>) -> Result<()> {
     let mut agent = AgentSystem::new(model);
+    if let Some(timeout) = timeout {
+        agent.set_timeout(std::time::Duration::from_secs(timeout));
+    }
+    agent.set_verbose(verbose);
 
     let content = match (input, prompt) {
         (Some(input), _) => {

@@ -28,6 +28,8 @@ pub struct AgentSystem {
     pub config: Config,
     pub requested_model: Option<String>,
     conversation_history: Vec<String>,
+    timeout: Option<std::time::Duration>,
+    verbose: bool,
 }
 
 impl AgentSystem {
@@ -40,7 +42,17 @@ impl AgentSystem {
             config,
             requested_model,
             conversation_history,
+            timeout: None,
+            verbose: false,
         }
+    }
+
+    pub fn set_timeout(&mut self, timeout: std::time::Duration) {
+        self.timeout = Some(timeout);
+    }
+
+    pub fn set_verbose(&mut self, verbose: bool) {
+        self.verbose = verbose;
     }
 
     pub fn effective_model_id(&self) -> String {
@@ -87,39 +99,45 @@ impl AgentSystem {
         let full_prompt = self.build_full_prompt(input_text);
 
         let start = std::time::Instant::now();
-        let result = match provider.as_str() {
-            "ollama" => {
-                self.call_ollama(&full_prompt, &model_id, context_window, api_key)
-            }
-            "volcengine" | "copilot" => {
-                Ok(format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
-                    provider, provider, model_id, context_window))
-            }
-            _ => Ok(format!("Unknown provider: {}", provider)),
-        };
-        let duration = start.elapsed().as_secs_f64();
+         let result = match provider.as_str() {
+             "ollama" => {
+                 self.call_ollama(&full_prompt, &model_id, context_window, api_key)
+             }
+             "volcengine" | "copilot" => {
+                 Ok(format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
+                     provider, provider, model_id, context_window))
+             }
+             _ => Ok(format!("Unknown provider: {}", provider)),
+         };
+         let duration = start.elapsed().as_secs_f64();
 
-        match result {
-            Ok(result) => {
-                // Only add to conversation history if call succeeded
-                self.conversation_history.push(input_text.to_string());
-                self.conversation_history.push(result.clone());
+         match result {
+             Ok(result) => {
+                 // Only add to conversation history if call succeeded
+                 self.conversation_history.push(input_text.to_string());
+                 self.conversation_history.push(result.clone());
 
-                let input_tokens = full_prompt.len() / 4;
+                 let input_tokens = full_prompt.len() / 4;
 
-                self.save_conversation(input_text, &full_prompt, &result, &model_id);
-                Ok(ProcessResult {
-                    content: result,
-                    model: model_id,
-                    input_tokens,
-                    duration_seconds: duration,
-                })
-            }
-            Err(e) => {
-                // Do NOT add failed interaction to conversation history
-                Err(e)
-            }
-        }
+                 self.save_conversation(input_text, &full_prompt, &result, &model_id);
+                 Ok(ProcessResult {
+                     content: result,
+                     model: model_id,
+                     input_tokens,
+                     duration_seconds: duration,
+                 })
+             }
+             Err(e) => {
+                 // Do NOT add failed interaction to conversation history
+                 eprintln!("Debug: Full error - {}", e);
+                 let mut current = e.source();
+                 while let Some(source) = current {
+                     eprintln!("  Caused by: {}", source);
+                     current = source.source();
+                 }
+                 Err(e)
+             }
+         }
     }
 
     fn build_full_prompt(&self, _new_input: &str) -> String {
@@ -144,25 +162,29 @@ impl AgentSystem {
         full.trim_end().to_string()
     }
 
-    fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>) -> Result<String> {
-        let base_url = self.model_config().base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
-        let client = OllamaClient::new(&base_url, api_key);
+     fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>) -> Result<String> {
+          let base_url = self.model_config().base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
+          let mut client = OllamaClient::new(&base_url, api_key);
+          if let Some(timeout) = self.timeout {
+              client.set_timeout(timeout);
+          }
+          client.set_verbose(self.verbose);
 
-        let start = Instant::now();
-        let result = match client.chat(model, prompt, context_window) {
-            Ok(r) => r,
-            Err(e) => {
-                return Err(anyhow!("Error connecting to ollama: {}\nPlease ensure ollama is running and the model '{}' is pulled.\nHint: Run 'ollama pull {}' to download the model first.",
-                    e, model, model))
-            }
-        };
-        let duration = start.elapsed().as_secs_f64();
+         let start = Instant::now();
+         let result = client.chat(model, prompt, context_window);
+         let duration = start.elapsed().as_secs_f64();
 
-        let mut collector = PerformanceCollector::new();
-        let _ = collector.record_call(model, prompt, &result, duration);
-
-        Ok(result)
-    }
+         match result {
+             Ok(r) => {
+                 let mut collector = PerformanceCollector::new();
+                 let _ = collector.record_call(model, prompt, &r, duration);
+                 Ok(r)
+             }
+             Err(e) => {
+                 Err(anyhow!("{}", e))
+             }
+         }
+     }
 
     fn save_conversation(&mut self, user_input: &str, full_prompt: &str, agent_response: &str, model: &str) {
         let mut memory = Memory::new(None);
