@@ -108,7 +108,7 @@ impl OllamaClient {
         };
 
         let url = format!("{}api/chat", self.base_url);
-        let mut response = client.post(&url)
+        let response = client.post(&url)
             .json(&req)
             .send()?;
 
@@ -207,6 +207,167 @@ impl OllamaClient {
         }
 
         Ok(full_content)
+    }
+
+    pub fn chat_with_timing(&self, model: &str, prompt: &str, context_window: u32) -> Result<(String, f64, f64, usize, usize)> {
+        let client = self.make_client()?;
+        let options = if context_window > 0 {
+            Some(ChatOptions { num_ctx: context_window })
+        } else {
+            None
+        };
+
+        let req = ChatRequest {
+            model: model.to_string(),
+             messages: vec![ChatMessage {
+                 role: "user".to_string(),
+                 content: prompt.to_string(),
+                 thinking: None,
+             }],
+            options,
+            stream: Some(true),
+        };
+
+        let url = format!("{}api/chat", self.base_url);
+        let request_time = std::time::Instant::now();
+        let response = client.post(&url)
+            .json(&req)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            return Err(anyhow!("Ollama API error: {} - {}", status, text));
+        }
+
+        let mut full_content = String::new();
+        let mut current_thinking = String::new();
+        let mut thinking_started = false;
+        
+        let mut ttft_seconds: f64 = 0.0;
+        let mut thinking_start_time: Option<std::time::Instant> = None;
+        let mut thinking_end_time: Option<std::time::Instant> = None;
+        let mut in_thinking = false;
+
+        let reader = io::BufReader::new(response);
+        for line in reader.lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(e) => {
+                    return Err(e.into());
+                }
+            };
+            let json: Result<ChatResponse, _> = serde_json::from_str(&line);
+            match json {
+                Ok(msg) => {
+                    if self.verbose {
+                        println!("[debug] Received chunk: {:?}", msg);
+                    }
+                    
+                    if ttft_seconds == 0.0 {
+                        ttft_seconds = request_time.elapsed().as_secs_f64();
+                    }
+                    
+                     if let Some(delta) = &msg.delta {
+                           // Always add content to full response if it exists
+                           if !delta.content.is_empty() {
+                               full_content.push_str(&delta.content);
+                           }
+
+                            // Handle separate thinking field (new Ollama format like qwen3.5)
+                            if let Some(thinking) = &delta.thinking {
+                                if !thinking.is_empty() {
+                                    if !in_thinking {
+                                        in_thinking = true;
+                                        thinking_start_time = Some(std::time::Instant::now());
+                                    }
+                                    current_thinking.push_str(thinking);
+                                    if !thinking_started {
+                                        print!("[thinking] ");
+                                        thinking_started = true;
+                                    }
+                                    print!("{}", thinking);
+                                    io::stdout().flush()?;
+                                }
+                            }
+                            // Legacy: thinking inside content with <think> tags
+                            else if delta.content.contains("<think>") || !current_thinking.is_empty() {
+                                if !in_thinking {
+                                    in_thinking = true;
+                                    thinking_start_time = Some(std::time::Instant::now());
+                                }
+                                current_thinking.push_str(&delta.content);
+                                if !thinking_started {
+                                    print!("[thinking] ");
+                                    thinking_started = true;
+                                }
+                                print!("{}", delta.content);
+                                io::stdout().flush()?;
+                            } else if in_thinking && !delta.content.is_empty() {
+                                // Transition from thinking to answering
+                                in_thinking = false;
+                                thinking_end_time = Some(std::time::Instant::now());
+                            }
+                      }
+                       // Some responses put thinking in message instead of delta
+                         if let Some(message) = &msg.message {
+                             // Handle thinking if present
+                             if let Some(thinking) = &message.thinking {
+                                 if !thinking.is_empty() {
+                                     if !in_thinking {
+                                         in_thinking = true;
+                                         thinking_start_time = Some(std::time::Instant::now());
+                                     }
+                                     current_thinking.push_str(thinking);
+                                     if !thinking_started {
+                                         print!("[thinking] ");
+                                         thinking_started = true;
+                                     }
+                                     print!("{}", thinking);
+                                     io::stdout().flush()?;
+                                 }
+                             }
+                            // Always add content to full response if it exists
+                            if !message.content.is_empty() {
+                                full_content.push_str(&message.content);
+                            }
+                        }
+                    if msg.done {
+                        if in_thinking && thinking_start_time.is_some() {
+                            thinking_end_time = Some(std::time::Instant::now());
+                        }
+                        break;
+                    }
+                }
+                Err(_) => {
+                    // Bad JSON line probably due to chunking - just continue
+                    if self.verbose {
+                        println!("[debug] Failed to parse JSON line: {}", line);
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // Final newline after done thinking to clear the thinking line
+        if !current_thinking.is_empty() {
+            println!();
+        }
+
+        // Calculate thinking time
+        let thinking_time_seconds = if let (Some(start), Some(end)) = (thinking_start_time, thinking_end_time) {
+            end.duration_since(start).as_secs_f64()
+        } else if in_thinking && thinking_start_time.is_some() {
+            // If thinking never ended, use total elapsed time minus TTFT
+            request_time.elapsed().as_secs_f64() - ttft_seconds
+        } else {
+            0.0
+        };
+
+        let thinking_tokens = current_thinking.len() / 4;
+        let answering_tokens = full_content.len() / 4;
+
+        Ok((full_content, ttft_seconds, thinking_time_seconds, thinking_tokens, answering_tokens))
     }
 
     pub fn list_models(&self) -> Result<Vec<String>> {

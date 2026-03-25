@@ -1,10 +1,8 @@
 //! Performance measurement and statistics for mullande
 
-use std::fs;
-use std::path::Path;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sys_info;
 use crate::memory::Memory;
 
@@ -18,6 +16,11 @@ pub struct PerformanceRecord {
     pub output_length: OutputLength,
     pub duration_seconds: f64,
     pub tokens_per_second: f64,
+    pub ttft_seconds: f64,
+    pub thinking_time_seconds: f64,
+    pub answering_time_seconds: f64,
+    pub thinking_tokens: usize,
+    pub answering_tokens: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,7 +32,11 @@ pub struct InputLength {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OutputLength {
     pub chars: usize,
+    pub thinking_chars: usize,
+    pub answering_chars: usize,
     pub tokens_estimated: usize,
+    pub thinking_tokens: usize,
+    pub answering_tokens: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,6 +77,14 @@ pub struct ModelStats {
     pub avg_input_chars: f64,
     pub avg_output_chars: f64,
     pub total_output_tokens_estimated: usize,
+    pub avg_ttft_seconds: f64,
+    pub avg_thinking_time_seconds: f64,
+    pub avg_answering_time_seconds: f64,
+    pub avg_thinking_tokens: f64,
+    pub avg_answering_tokens: f64,
+    pub thinking_tokens_per_second: f64,
+    pub answering_tokens_per_second: f64,
+    pub answering_tokens_per_total_time: f64,
 }
 
 pub struct PerformanceCollector {
@@ -162,16 +177,24 @@ impl PerformanceCollector {
         input_text: &str,
         output_text: &str,
         duration_seconds: f64,
+        ttft_seconds: f64,
+        thinking_time_seconds: f64,
+        answering_time_seconds: f64,
+        thinking_tokens: usize,
+        answering_tokens: usize,
     ) -> Result<()> {
         self.ensure_initialized()?;
 
         let input_chars = input_text.len();
         let output_chars = output_text.len();
         let input_tokens_est = input_chars / 4;
-        let output_tokens_est = output_chars / 4;
+        
+        let thinking_chars = thinking_tokens * 4;
+        let answering_chars = answering_tokens * 4;
+        let total_output_tokens = thinking_tokens + answering_tokens;
 
         let tokens_per_second = if duration_seconds > 0.0 {
-            (output_tokens_est as f64) / duration_seconds
+            (total_output_tokens as f64) / duration_seconds
         } else {
             0.0
         };
@@ -184,10 +207,19 @@ impl PerformanceCollector {
             },
             output_length: OutputLength {
                 chars: output_chars,
-                tokens_estimated: output_tokens_est,
+                thinking_chars,
+                answering_chars,
+                tokens_estimated: total_output_tokens,
+                thinking_tokens,
+                answering_tokens,
             },
             duration_seconds,
             tokens_per_second,
+            ttft_seconds,
+            thinking_time_seconds,
+            answering_time_seconds,
+            thinking_tokens,
+            answering_tokens,
         };
 
         let safe_name = Self::sanitize_model_name(model_name);
@@ -204,7 +236,7 @@ impl PerformanceCollector {
 
         self.memory.write_one(&jsonl_path, &new_content,
             &format!("Record performance data for {}: {} tokens in {}s",
-                model_name, output_tokens_est, duration_seconds.round()));
+                model_name, total_output_tokens, duration_seconds.round()));
 
         Ok(())
     }
@@ -238,6 +270,30 @@ impl PerformanceCollector {
         let total_input_chars: usize = records.iter().map(|r| r.input_length.chars).sum();
         let total_output_chars: usize = records.iter().map(|r| r.output_length.chars).sum();
         let total_tokens_per_second: f64 = records.iter().map(|r| r.tokens_per_second).sum();
+        
+        let total_ttft: f64 = records.iter().map(|r| r.ttft_seconds).sum();
+        let total_thinking_time: f64 = records.iter().map(|r| r.thinking_time_seconds).sum();
+        let total_answering_time: f64 = records.iter().map(|r| r.answering_time_seconds).sum();
+        let total_thinking_tokens: usize = records.iter().map(|r| r.thinking_tokens).sum();
+        let total_answering_tokens: usize = records.iter().map(|r| r.answering_tokens).sum();
+
+        let avg_thinking_tokens_per_second = if total_thinking_time > 0.0 {
+            (total_thinking_tokens as f64) / total_thinking_time
+        } else {
+            0.0
+        };
+        
+        let avg_answering_tokens_per_second = if total_answering_time > 0.0 {
+            (total_answering_tokens as f64) / total_answering_time
+        } else {
+            0.0
+        };
+
+        let avg_answering_per_total_time = if total_duration > 0.0 {
+            (total_answering_tokens as f64) / total_duration
+        } else {
+            0.0
+        };
 
         Ok(Some(ModelStats {
             model_name: model_name.to_string(),
@@ -248,6 +304,14 @@ impl PerformanceCollector {
             avg_input_chars: (total_input_chars as f64) / (total_calls as f64),
             avg_output_chars: (total_output_chars as f64) / (total_calls as f64),
             total_output_tokens_estimated: total_output_tokens,
+            avg_ttft_seconds: ((total_ttft / (total_calls as f64)) * 100.0).round() / 100.0,
+            avg_thinking_time_seconds: ((total_thinking_time / (total_calls as f64)) * 100.0).round() / 100.0,
+            avg_answering_time_seconds: ((total_answering_time / (total_calls as f64)) * 100.0).round() / 100.0,
+            avg_thinking_tokens: (total_thinking_tokens as f64) / (total_calls as f64),
+            avg_answering_tokens: (total_answering_tokens as f64) / (total_calls as f64),
+            thinking_tokens_per_second: (avg_thinking_tokens_per_second * 100.0).round() / 100.0,
+            answering_tokens_per_second: (avg_answering_tokens_per_second * 100.0).round() / 100.0,
+            answering_tokens_per_total_time: (avg_answering_per_total_time * 100.0).round() / 100.0,
         }))
     }
 

@@ -92,7 +92,7 @@ impl AgentSystem {
         let context_window = self.get_context_window();
         let api_key = self.get_api_key();
 
-        // Build full prompt with conversation history
+         // Build full prompt with conversation history
         let full_prompt = self.build_full_prompt(input_text);
 
         let start = std::time::Instant::now();
@@ -101,15 +101,15 @@ impl AgentSystem {
                  self.call_ollama(&full_prompt, &model_id, context_window, api_key)
              }
              "volcengine" | "copilot" => {
-                 Ok(format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
-                     provider, provider, model_id, context_window))
+                 Ok((format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
+                     provider, provider, model_id, context_window), 0.0, 0.0, 0.0, 0, 0))
              }
-             _ => Ok(format!("Unknown provider: {}", provider)),
+             _ => Ok((format!("Unknown provider: {}", provider), 0.0, 0.0, 0.0, 0, 0)),
          };
          let duration = start.elapsed().as_secs_f64();
 
          match result {
-             Ok(result) => {
+             Ok((result, _ttft, _thinking_time, _answering_time, _thinking_tokens, _answering_tokens)) => {
                  // Only add to conversation history if call succeeded
                  self.conversation_history.push(input_text.to_string());
                  self.conversation_history.push(result.clone());
@@ -159,29 +159,30 @@ impl AgentSystem {
         full.trim_end().to_string()
     }
 
-     fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>) -> Result<String> {
-          let base_url = self.model_config().base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
-          let mut client = OllamaClient::new(&base_url, api_key);
-          if let Some(timeout) = self.timeout {
-              client.set_timeout(timeout);
+      fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>) -> Result<(String, f64, f64, f64, usize, usize)> {
+           let base_url = self.model_config().base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
+           let mut client = OllamaClient::new(&base_url, api_key);
+           if let Some(timeout) = self.timeout {
+               client.set_timeout(timeout);
+           }
+           client.set_verbose(self.verbose);
+
+          let start = Instant::now();
+          let result = client.chat_with_timing(model, prompt, context_window);
+          let duration = start.elapsed().as_secs_f64();
+
+          match result {
+              Ok((r, ttft, thinking_time, thinking_tokens, answering_tokens)) => {
+                  let answering_time = duration - ttft - thinking_time;
+                  let mut collector = PerformanceCollector::new();
+                  let _ = collector.record_call(model, prompt, &r, duration, ttft, thinking_time, answering_time, thinking_tokens, answering_tokens);
+                  Ok((r, duration, ttft, thinking_time, thinking_tokens, answering_tokens))
+              }
+              Err(e) => {
+                  Err(anyhow!("{}", e))
+              }
           }
-          client.set_verbose(self.verbose);
-
-         let start = Instant::now();
-         let result = client.chat(model, prompt, context_window);
-         let duration = start.elapsed().as_secs_f64();
-
-         match result {
-             Ok(r) => {
-                 let mut collector = PerformanceCollector::new();
-                 let _ = collector.record_call(model, prompt, &r, duration);
-                 Ok(r)
-             }
-             Err(e) => {
-                 Err(anyhow!("{}", e))
-             }
-         }
-     }
+      }
 
     fn save_conversation(&mut self, user_input: &str, full_prompt: &str, agent_response: &str, model: &str) {
         let mut memory = Memory::new(None);

@@ -135,12 +135,11 @@ impl Memory {
         let entry = format!("\n\n---\n\n**[{}]** Model: `{}`\n\n**User:** {}\n\n**Agent:** {}\n",
             timestamp, model, user_input, agent_response);
 
-        let mut existing_content = String::new();
-        if self.exists(CONVERSATION_PATH) {
-            existing_content = self.read(CONVERSATION_PATH).unwrap_or_default();
+        let existing_content = if self.exists(CONVERSATION_PATH) {
+            self.read(CONVERSATION_PATH).unwrap_or_default()
         } else {
-            existing_content = "# Mullande Conversation Log\n\nThis file stores all conversations from mullande run and mullande chat.\n".to_string();
-        }
+            "# Mullande Conversation Log\n\nThis file stores all conversations from mullande run and mullande chat.\n".to_string()
+        };
 
         let new_content = existing_content + &entry;
         self.write_one(CONVERSATION_PATH, &new_content,

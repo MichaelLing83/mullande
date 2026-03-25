@@ -1,8 +1,7 @@
 //! Display performance statistics as table
 
 use prettytable::{Table, Row, Cell};
-use crate::performance::{PerformanceCollector, ModelStats};
-use anyhow::Result;
+use crate::performance::PerformanceCollector;
 
 pub fn show_stats() {
     let mut collector = PerformanceCollector::new();
@@ -11,10 +10,14 @@ pub fn show_stats() {
     table.set_titles(Row::new(vec![
         Cell::new("Model").style_spec("cFb"),
         Cell::new("Calls").style_spec("rFb"),
-        Cell::new("Avg Duration").style_spec("rFb"),
-        Cell::new("Tokens/sec").style_spec("rFb"),
-        Cell::new("Avg Input").style_spec("rFb"),
-        Cell::new("Avg Output").style_spec("rFb"),
+        Cell::new("TTFT").style_spec("rFb"),
+        Cell::new("Think Time").style_spec("rFb"),
+        Cell::new("Ans Time").style_spec("rFb"),
+        Cell::new("Think Toks").style_spec("rFb"),
+        Cell::new("Ans Toks").style_spec("rFb"),
+        Cell::new("Think/s").style_spec("rFb"),
+        Cell::new("Ans/s").style_spec("rFb"),
+        Cell::new("Ans/Total").style_spec("rFb"),
     ]));
 
     let mut total_calls_all = 0;
@@ -25,10 +28,14 @@ pub fn show_stats() {
                     table.add_row(Row::new(vec![
                         Cell::new(&stats.model_name),
                         Cell::new(&stats.total_calls.to_string()),
-                        Cell::new(&format!("{:.2}s", stats.avg_duration_seconds)),
-                        Cell::new(&format!("{:.2}", stats.avg_tokens_per_second)),
-                        Cell::new(&format!("{:.1}", stats.avg_input_chars)),
-                        Cell::new(&format!("{:.1}", stats.avg_output_chars)),
+                        Cell::new(&format!("{:.2}s", stats.avg_ttft_seconds)),
+                        Cell::new(&format!("{:.1}s", stats.avg_thinking_time_seconds)),
+                        Cell::new(&format!("{:.1}s", stats.avg_answering_time_seconds)),
+                        Cell::new(&format!("{:.1}", stats.avg_thinking_tokens)),
+                        Cell::new(&format!("{:.1}", stats.avg_answering_tokens)),
+                        Cell::new(&format!("{:.1}", stats.thinking_tokens_per_second)),
+                        Cell::new(&format!("{:.1}", stats.answering_tokens_per_second)),
+                        Cell::new(&format!("{:.1}", stats.answering_tokens_per_total_time)),
                     ]));
                     total_calls_all += stats.total_calls;
                 }
@@ -65,7 +72,25 @@ pub fn show_stats() {
              println!();
             }
 
+            println!("\n\x1b[1;34mTime Metrics (avg per call)\x1b[0m");
+            println!("  \x1b[33mTTFT\x1b[0m = Time To First Token (request to first token)");
+            println!("  \x1b[33mThink Time\x1b[0m = Time spent on thinking");
+            println!("  \x1b[33mAns Time\x1b[0m = Time spent on answering (after thinking)");
+            println!();
+            
             table.printstd();
+            
+            println!("\n\x1b[1;34mToken Metrics (avg per call)\x1b[0m");
+            println!("  \x1b[33mThink Toks\x1b[0m = Tokens used for thinking");
+            println!("  \x1b[33mAns Toks\x1b[0m = Tokens used for answering");
+            println!();
+            
+            println!("\n\x1b[1;34mSpeed Metrics\x1b[0m");
+            println!("  \x1b[33mThink/s\x1b[0m = Thinking tokens / Thinking time");
+            println!("  \x1b[33mAns/s\x1b[0m = Answering tokens / Answering time");
+            println!("  \x1b[33mAns/Total\x1b[0m = Answering tokens / Total time");
+            println!();
+            
             println!("\n\x1b[1mTotal recorded calls across all models: {}\x1b[0m", total_calls_all);
         }
         Err(e) => {
