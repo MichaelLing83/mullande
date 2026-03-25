@@ -2,10 +2,10 @@
 
 use std::time::Instant;
 use anyhow::{Result, anyhow};
-use chrono::Utc;
 use crate::config::{Config, ModelConfig};
 use crate::performance::PerformanceCollector;
-use crate::workspace::{WorkspaceManager, Memory};
+use crate::workspace::WorkspaceManager;
+use crate::memory::Memory;
 use crate::logging::Logger;
 use crate::agent::ollama::OllamaClient;
 
@@ -34,10 +34,12 @@ impl AgentSystem {
     pub fn new(requested_model: Option<String>) -> Self {
         let workspace = WorkspaceManager::default();
         let config = crate::config::get_config(&workspace.mullande_dir).unwrap();
+        let memory = Memory::new(Some(workspace.clone()));
+        let conversation_history = memory.load_conversation_history().unwrap_or_else(|_| Vec::new());
         Self {
             config,
             requested_model,
-            conversation_history: Vec::new(),
+            conversation_history,
         }
     }
 
@@ -162,22 +164,7 @@ impl AgentSystem {
 
     fn save_conversation(&mut self, user_input: &str, full_prompt: &str, agent_response: &str, model: &str) {
         let mut memory = Memory::new(None);
-        let conversation_path = "CONVERSATIONS.md";
-
-        let timestamp = Utc::now().to_rfc3339();
-        let entry = format!("\n\n---\n\n**[{}]** Model: `{}`\n\n**User:** {}\n\n**Agent:** {}\n",
-            timestamp, model, user_input, agent_response);
-
-        let mut existing_content = String::new();
-        if memory.exists(conversation_path) {
-            existing_content = memory.read(conversation_path).unwrap_or_default();
-        } else {
-            existing_content = "# Mullande Conversation Log\n\nThis file stores all conversations from mullande run and mullande chat.\n".to_string();
-        }
-
-        let new_content = existing_content + &entry;
-        let _ = memory.write_one(conversation_path, &new_content,
-            &format!("Add conversation turn using model {}: {} chars input", model, user_input.len()));
+        let _ = memory.append_to_conversation(user_input, agent_response, model);
 
         // Log interaction to .mullande/.logs including full prompt
         let workspace = WorkspaceManager::default();

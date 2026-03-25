@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use sys_info;
-use crate::workspace::Memory;
+use crate::memory::Memory;
 
 mod table;
 pub use self::table::*;
@@ -220,13 +220,13 @@ impl PerformanceCollector {
         let content = self.memory.read(&jsonl_path)?;
         let mut records: Vec<PerformanceRecord> = Vec::new();
 
-        for line in content.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                let record: PerformanceRecord = serde_json::from_str(line)?;
-                records.push(record);
-            }
-        }
+         for line in content.lines() {
+             let line: &str = line.trim();
+             if !line.is_empty() {
+                 let record: PerformanceRecord = serde_json::from_str(line)?;
+                 records.push(record);
+             }
+         }
 
         if records.is_empty() {
             return Ok(None);
@@ -255,8 +255,9 @@ impl PerformanceCollector {
         let files = self.memory.list_files()?;
         let mut models = Vec::new();
         let prefix = format!("{}/", self.perf_dir);
-        for file in files {
-            if file.starts_with(&prefix) && file.ends_with(".jsonl") {
+         for file in files {
+             let file: &str = &file;
+             if file.starts_with(&prefix) && file.ends_with(".jsonl") {
                 let model_name = file.strip_prefix(&prefix)
                     .unwrap()
                     .strip_suffix(".jsonl")

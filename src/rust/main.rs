@@ -3,6 +3,7 @@
 mod cli;
 mod config;
 mod workspace;
+mod memory;
 mod agent;
 mod performance;
 mod logging;
