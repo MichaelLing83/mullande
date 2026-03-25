@@ -118,8 +118,9 @@ impl OllamaClient {
             return Err(anyhow!("Ollama API error: {} - {}", status, text));
         }
 
-        let mut full_content = String::new();
-        let mut current_thinking = String::new();
+          let mut full_content = String::new();
+          let mut current_thinking = String::new();
+          let mut lines_printed = 0;
 
         let reader = io::BufReader::new(response);
         for line in reader.lines() {
@@ -141,48 +142,60 @@ impl OllamaClient {
                               full_content.push_str(&delta.content);
                           }
 
-                          // Handle separate thinking field (new Ollama format like qwen3.5)
-                          if let Some(thinking) = &delta.thinking {
-                              if !thinking.is_empty() {
-                                  current_thinking.push_str(thinking);
-                                  // Print with [thinking] prefix on every line
-                                  print!("\r\x1b[K");
-                                  for line in current_thinking.lines() {
-                                      println!("[thinking] {}", line);
-                                  }
-                                  io::stdout().flush()?;
-                              }
-                          }
-                          // Legacy: thinking inside content with <think> tags
-                          else if delta.content.contains("<think>") || !current_thinking.is_empty() {
-                              current_thinking.push_str(&delta.content);
-                              // Print with [thinking] prefix on every line
-                              print!("\r\x1b[K");
-                              for line in current_thinking.lines() {
-                                  println!("[thinking] {}", line);
-                              }
-                              io::stdout().flush()?;
-                          }
-                      }
-                       // Some responses put thinking in message instead of delta
-                       if let Some(message) = &msg.message {
-                           // Handle thinking if present
-                           if let Some(thinking) = &message.thinking {
+                           // Handle separate thinking field (new Ollama format like qwen3.5)
+                           if let Some(thinking) = &delta.thinking {
                                if !thinking.is_empty() {
+                                   let _previous_lines = current_thinking.lines().count();
                                    current_thinking.push_str(thinking);
-                                   // Print with [thinking] prefix on every line
-                                   print!("\r\x1b[K");
-                                   for line in current_thinking.lines() {
+                                   // Only print new lines that haven't been printed yet
+                                   let all_lines: Vec<_> = current_thinking.lines().collect();
+                                   if all_lines.len() > lines_printed {
+                                       for line in &all_lines[lines_printed..] {
+                                           println!("[thinking] {}", line);
+                                       }
+                                       lines_printed = all_lines.len();
+                                       io::stdout().flush()?;
+                                   }
+                               }
+                           }
+                           // Legacy: thinking inside content with <think> tags
+                           else if delta.content.contains("<think>") || !current_thinking.is_empty() {
+                               let _previous_lines = current_thinking.lines().count();
+                               current_thinking.push_str(&delta.content);
+                               // Only print new lines that haven't been printed yet
+                               let all_lines: Vec<_> = current_thinking.lines().collect();
+                               if all_lines.len() > lines_printed {
+                                   for line in &all_lines[lines_printed..] {
                                        println!("[thinking] {}", line);
                                    }
+                                   lines_printed = all_lines.len();
                                    io::stdout().flush()?;
                                }
                            }
-                           // Always add content to full response if it exists
-                           if !message.content.is_empty() {
-                               full_content.push_str(&message.content);
-                           }
-                       }
+                      }
+                       // Some responses put thinking in message instead of delta
+                        if let Some(message) = &msg.message {
+                            // Handle thinking if present
+                            if let Some(thinking) = &message.thinking {
+                                if !thinking.is_empty() {
+                                    let _previous_lines = current_thinking.lines().count();
+                                    current_thinking.push_str(thinking);
+                                    // Only print new lines that haven't been printed yet
+                                    let all_lines: Vec<_> = current_thinking.lines().collect();
+                                    if all_lines.len() > lines_printed {
+                                        for line in &all_lines[lines_printed..] {
+                                            println!("[thinking] {}", line);
+                                        }
+                                        lines_printed = all_lines.len();
+                                        io::stdout().flush()?;
+                                    }
+                                }
+                            }
+                            // Always add content to full response if it exists
+                            if !message.content.is_empty() {
+                                full_content.push_str(&message.content);
+                            }
+                        }
                     if msg.done {
                         break;
                     }
