@@ -40,18 +40,29 @@ pub fn show_stats() {
             }
 
             if let Ok(Some(sys_info)) = collector.get_system_info_cached() {
-                println!("\n\x1b[1;34mSystem Information\x1b[0m");
-                let os = &sys_info.os;
-                let cpu = &sys_info.cpu;
-                let mem = &sys_info.memory;
-                let ollama_ver = sys_info.ollama_version.as_deref().unwrap_or("Unknown");
-                println!("  OS: {} {} {} ({})", os.name, os.release, os.version, os.architecture);
-                println!("  CPU: {} physical / {} logical cores",
-                    cpu.physical_cores.unwrap_or(0),
-                    cpu.logical_cores.unwrap_or(0));
-                println!("  Memory: {:.2} GB total", mem.total_gb);
-                println!("  Ollama version: {}", ollama_ver);
-                println!();
+             println!("\n\x1b[1;34mSystem Information\x1b[0m");
+             let os = &sys_info.os;
+             let cpu = &sys_info.cpu;
+             let mem = &sys_info.memory;
+             let ollama_ver = sys_info.ollama_version.as_deref().unwrap_or("Unknown");
+             println!("  OS: {} {} {} ({})", os.name, os.release, os.version, os.architecture);
+             match (cpu.physical_cores, cpu.logical_cores) {
+                 (Some(physical), Some(logical)) => {
+                     println!("  CPU: {} physical / {} logical cores", physical, logical);
+                 }
+                 (None, Some(logical)) => {
+                     println!("  CPU: {} logical cores", logical);
+                 }
+                 (Some(physical), None) => {
+                     println!("  CPU: {} physical cores", physical);
+                 }
+                 (None, None) => {
+                     println!("  CPU: Unknown");
+                 }
+             }
+             println!("  Memory: {:.2} GB total", mem.total_gb);
+             println!("  Ollama version: {}", ollama_ver);
+             println!();
             }
 
             table.printstd();
