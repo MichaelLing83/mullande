@@ -15,6 +15,14 @@ pub struct AgentResponse {
     pub content: String,
 }
 
+#[derive(Debug)]
+pub struct ProcessResult {
+    pub content: String,
+    pub model: String,
+    pub input_tokens: usize,
+    pub duration_seconds: f64,
+}
+
 pub struct AgentSystem {
     pub config: Config,
     pub requested_model: Option<String>,
@@ -67,7 +75,7 @@ impl AgentSystem {
         self.config.get_api_key(self.requested_model.as_deref())
     }
 
-    pub fn process(&mut self, input_text: &str) -> Result<String> {
+    pub fn process(&mut self, input_text: &str) -> Result<ProcessResult> {
         self.conversation_history.push(input_text.to_string());
 
         let provider = self.model_config().provider.clone();
@@ -75,6 +83,7 @@ impl AgentSystem {
         let context_window = self.get_context_window();
         let api_key = self.get_api_key();
 
+        let start = std::time::Instant::now();
         let result = match provider.as_str() {
             "ollama" => {
                 self.call_ollama(input_text, &model_id, context_window, api_key)
@@ -85,14 +94,22 @@ impl AgentSystem {
             }
             _ => Ok(format!("Unknown provider: {}", provider)),
         };
+        let duration = start.elapsed().as_secs_f64();
 
         let result = match result {
             Ok(r) => r,
             Err(e) => format!("Error: {}", e),
         };
 
+        let input_tokens = input_text.len() / 4;
+
         self.save_conversation(input_text, &result, &model_id);
-        Ok(result)
+        Ok(ProcessResult {
+            content: result,
+            model: model_id,
+            input_tokens,
+            duration_seconds: duration,
+        })
     }
 
     fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>) -> Result<String> {

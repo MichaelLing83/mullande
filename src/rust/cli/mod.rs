@@ -122,7 +122,11 @@ fn run_command(model: Option<String>, prompt: Option<String>, input: Option<Stri
     };
 
     let result = agent.process(&content)?;
-    println!("{}", result);
+    println!("\n{} Model: {}", "►".blue(), result.model);
+    println!("{} Input tokens: ~{}", "►".blue(), result.input_tokens);
+    println!("{} Time: {:.2}s", "►".blue(), result.duration_seconds);
+    println!("\n{}", result.content);
+    println!();
     Ok(())
 }
 
@@ -146,14 +150,14 @@ fn chat_command() -> Result<()> {
                 if prompt.is_empty() {
                     continue;
                 }
-                match agent.process(prompt) {
-                    Ok(response) => {
-                        println!("\n{} {}", "Agent >".green(), response);
-                    }
-                    Err(e) => {
-                        println!("\n{} {}", "Error:".red(), e);
-                    }
-                }
+                 match agent.process(prompt) {
+                     Ok(result) => {
+                         println!("\n{} {}", "Agent >".green(), result.content);
+                     }
+                     Err(e) => {
+                         println!("\n{} {}", "Error:".red(), e);
+                     }
+                 }
             }
             Err(e) => {
                 println!("{} {}", "Error reading input:".red(), e);
