@@ -7,7 +7,8 @@ use crate::performance::PerformanceCollector;
 use crate::workspace::WorkspaceManager;
 use crate::memory::Memory;
 use crate::logging::Logger;
-use crate::agent::ollama::OllamaClient;
+use crate::agent::ollama::{OllamaClient, ChatMessage};
+use crate::tools::ToolRegistry;
 
 pub mod ollama;
 
@@ -28,6 +29,7 @@ pub struct AgentSystem {
     timeout: Option<std::time::Duration>,
     verbose: bool,
     params_override: ModelParams,
+    tools_enabled: bool,
 }
 
 impl AgentSystem {
@@ -43,6 +45,7 @@ impl AgentSystem {
             timeout: None,
             verbose: false,
             params_override: ModelParams::default(),
+            tools_enabled: false,
         }
     }
 
@@ -56,6 +59,10 @@ impl AgentSystem {
 
     pub fn set_model_params(&mut self, params: ModelParams) {
         self.params_override = params;
+    }
+
+    pub fn set_tools_enabled(&mut self, enabled: bool) {
+        self.tools_enabled = enabled;
     }
 
     pub fn effective_model_id(&self) -> String {
@@ -112,20 +119,24 @@ impl AgentSystem {
         let full_prompt = self.build_full_prompt(input_text);
 
         let start = std::time::Instant::now();
-         let result = match provider.as_str() {
-             "ollama" => {
-                 self.call_ollama(&full_prompt, &model_id, context_window, api_key, params)
-             }
-             "volcengine" | "copilot" => {
-                 Ok((format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
-                     provider, provider, model_id, context_window), 0.0, 0.0, 0.0, 0, 0))
-             }
-             _ => Ok((format!("Unknown provider: {}", provider), 0.0, 0.0, 0.0, 0, 0)),
-         };
-         let duration = start.elapsed().as_secs_f64();
+        let result = match provider.as_str() {
+            "ollama" => {
+                if self.tools_enabled {
+                    self.call_ollama_with_tools(&full_prompt, &model_id, context_window, api_key, params)
+                } else {
+                    self.call_ollama(&full_prompt, &model_id, context_window, api_key, params)
+                }
+            }
+            "volcengine" | "copilot" => {
+                Ok((format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
+                    provider, provider, model_id, context_window), 0.0, 0.0, 0.0, 0, 0))
+            }
+            _ => Ok((format!("Unknown provider: {}", provider), 0.0, 0.0, 0.0, 0, 0)),
+        };
+        let duration = start.elapsed().as_secs_f64();
 
-         match result {
-             Ok((result, _ttft, _thinking_time, _answering_time, _thinking_tokens, _answering_tokens)) => {
+        match result {
+            Ok((result, _ttft, _thinking_time, _answering_time, _thinking_tokens, _answering_tokens)) => {
                  // Only add to conversation history if call succeeded
                  self.conversation_history.push(input_text.to_string());
                  self.conversation_history.push(result.clone());
@@ -208,5 +219,73 @@ impl AgentSystem {
         let workspace = WorkspaceManager::default();
         let logger = Logger::new(workspace);
         let _ = logger.log_interaction(model, user_input, full_prompt, agent_response);
+    }
+
+    fn call_ollama_with_tools(
+        &self,
+        prompt: &str,
+        model: &str,
+        context_window: u32,
+        api_key: Option<String>,
+        params: ModelParams,
+    ) -> Result<(String, f64, f64, f64, usize, usize)> {
+        let base_url = self.model_config().base_url.clone()
+            .unwrap_or_else(|| "http://localhost:11434".to_string());
+        let mut client = OllamaClient::new(&base_url, api_key);
+        if let Some(timeout) = self.timeout { client.set_timeout(timeout); }
+        client.set_verbose(self.verbose);
+
+        let registry = ToolRegistry::new();
+        let tool_defs = registry.to_json_defs();
+
+        let mut messages: Vec<ChatMessage> = vec![ChatMessage {
+            role: "user".to_string(),
+            content: prompt.to_string(),
+            thinking: None,
+            tool_calls: None,
+        }];
+
+        let start = Instant::now();
+        let max_iterations = 15;
+        let mut final_answer = String::new();
+
+        for iteration in 0..max_iterations {
+            let response = client.send_messages(model, messages.clone(), context_window, &params, tool_defs.clone())?;
+
+            if let Some(calls) = response.tool_calls.as_ref().filter(|c| !c.is_empty()) {
+                // Push assistant message (with tool_calls) to history
+                messages.push(response.clone());
+
+                // Execute each tool call and add results
+                for tc in calls {
+                    let args_display = serde_json::to_string(&tc.function.arguments)
+                        .unwrap_or_else(|_| "{}".to_string());
+                    println!("\x1b[36m[tool:{}] {}({})\x1b[0m",
+                        iteration + 1, tc.function.name, args_display);
+
+                    let result = registry.execute(&tc.function.name, &tc.function.arguments);
+
+                    // Show a brief preview in gray
+                    let preview: String = result.chars().take(200).collect();
+                    let suffix = if result.len() > 200 { "…" } else { "" };
+                    println!("\x1b[90m{}{}\x1b[0m", preview, suffix);
+
+                    messages.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: result,
+                        thinking: None,
+                        tool_calls: None,
+                    });
+                }
+            } else {
+                // No tool calls — this is the final answer
+                final_answer = response.content.clone();
+                break;
+            }
+        }
+
+        let duration = start.elapsed().as_secs_f64();
+        let answer_tokens = final_answer.len() / 4;
+        Ok((final_answer, duration, 0.0, 0.0, 0, answer_tokens))
     }
 }

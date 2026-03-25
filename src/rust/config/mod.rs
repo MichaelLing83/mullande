@@ -36,6 +36,8 @@ pub struct ModelConfig {
     pub presence_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_enabled: Option<bool>,
 }
 
 impl Default for ModelConfig {
@@ -51,6 +53,7 @@ impl Default for ModelConfig {
             top_p: None,
             presence_penalty: None,
             thinking: None,
+            tools_enabled: None,
         }
     }
 }

@@ -57,6 +57,12 @@ pub enum Commands {
         #[arg(long, help = "Disable thinking/reasoning mode; overrides config", conflicts_with = "think")]
         no_think: bool,
 
+        #[arg(long, help = "Enable tool calling (read_file, write_file, bash, glob, grep)", conflicts_with = "no_tools")]
+        tools: bool,
+
+        #[arg(long, help = "Disable tool calling; overrides config", conflicts_with = "tools")]
+        no_tools: bool,
+
         input: Option<String>,
     },
     /// Show performance statistics collected from previous runs
@@ -106,8 +112,8 @@ pub fn main() -> Result<()> {
              println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
              Ok(())
          }
-          Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, input }) => {
-              run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, input)
+          Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input }) => {
+              run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input)
            }
           Some(Commands::Stats) => {
               stats_command()
@@ -125,6 +131,7 @@ pub fn main() -> Result<()> {
 fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u64>, verbose: bool,
                temperature: Option<f32>, top_k: Option<u32>, top_p: Option<f32>, presence_penalty: Option<f32>,
                think: bool, no_think: bool,
+               tools: bool, no_tools: bool,
                input: Option<String>) -> Result<()> {
     let mut agent = AgentSystem::new(model);
     if let Some(timeout) = timeout {
@@ -139,6 +146,11 @@ fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u6
         || cli_params.thinking.is_some() {
         agent.set_model_params(cli_params);
     }
+
+    // Tool calling: CLI flag > config
+    let config_tools = agent.model_config().tools_enabled.unwrap_or(false);
+    let tools_active = if tools { true } else if no_tools { false } else { config_tools };
+    agent.set_tools_enabled(tools_active);
 
     let content = match (input, prompt) {
         (Some(input), _) => {
@@ -253,6 +265,7 @@ fn import_ollama_models(mut config: Config, import_cloud: bool, _workspace: &Wor
                 top_p: None,
                 presence_penalty: None,
                 thinking: None,
+                tools_enabled: None,
             });
             added += 1;
         }
@@ -340,6 +353,7 @@ fn import_ollama_models(mut config: Config, import_cloud: bool, _workspace: &Wor
                 top_p: None,
                 presence_penalty: None,
                 thinking: None,
+                tools_enabled: None,
             });
             added += 1;
         }
@@ -446,6 +460,7 @@ fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -
         top_p: None,
         presence_penalty: None,
         thinking: None,
+        tools_enabled: None,
     };
 
     let mut models = config.data.models.take().unwrap_or_default();
@@ -525,6 +540,7 @@ fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -
                     top_p: None,
                     presence_penalty: None,
                     thinking: None,
+                    tools_enabled: None,
                 });
 
                 if !Confirm::new()

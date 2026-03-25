@@ -14,13 +14,29 @@ pub struct ChatRequest {
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ToolCall {
+    pub function: ToolCallFunction,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -127,10 +143,12 @@ impl OllamaClient {
                  role: "user".to_string(),
                  content: prompt.to_string(),
                  thinking: None,
+                 tool_calls: None,
              }],
             options,
             stream: Some(true),
             think: params.thinking,
+            tools: None,
         };
 
         let url = format!("{}api/chat", self.base_url);
@@ -243,10 +261,12 @@ impl OllamaClient {
                  role: "user".to_string(),
                  content: prompt.to_string(),
                  thinking: None,
+                 tool_calls: None,
              }],
             options,
             stream: Some(true),
             think: params.thinking,
+            tools: None,
         };
 
         let url = format!("{}api/chat", self.base_url);
@@ -412,5 +432,46 @@ impl OllamaClient {
             })
             .collect();
         Ok(models)
+    }
+
+    /// Send a list of messages (non-streaming) with optional tool definitions.
+    /// Returns the assistant's response message, which may contain tool_calls.
+    pub fn send_messages(
+        &self,
+        model: &str,
+        messages: Vec<ChatMessage>,
+        context_window: u32,
+        params: &ModelParams,
+        tools: Vec<serde_json::Value>,
+    ) -> Result<ChatMessage> {
+        let client = self.make_client()?;
+        let options = Self::build_options(context_window, params);
+        let tools_opt = if tools.is_empty() { None } else { Some(tools) };
+
+        let req = ChatRequest {
+            model: model.to_string(),
+            messages,
+            options,
+            stream: Some(false),
+            think: params.thinking,
+            tools: tools_opt,
+        };
+
+        let url = format!("{}api/chat", self.base_url);
+        let response = client.post(&url).json(&req).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            return Err(anyhow!("Ollama API error: {} - {}", status, text));
+        }
+
+        let body: serde_json::Value = response.json()?;
+        if let Some(msg) = body.get("message") {
+            let message: ChatMessage = serde_json::from_value(msg.clone())
+                .map_err(|e| anyhow!("Failed to parse message: {}", e))?;
+            return Ok(message);
+        }
+        Err(anyhow!("No message field in response: {}", body))
     }
 }
