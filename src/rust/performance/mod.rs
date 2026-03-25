@@ -1,10 +1,12 @@
 //! Performance measurement and statistics for mullande
 
-use anyhow::Result;
+use std::fs;
+use std::path::PathBuf;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use chrono::Utc;
 use sys_info;
-use crate::memory::Memory;
+use crate::workspace::WorkspaceManager;
 
 mod table;
 pub use self::table::show_stats;
@@ -88,8 +90,7 @@ pub struct ModelStats {
 }
 
 pub struct PerformanceCollector {
-    memory: Memory,
-    perf_dir: &'static str,
+    perf_dir: PathBuf,
 }
 
 impl Default for PerformanceCollector {
@@ -100,10 +101,35 @@ impl Default for PerformanceCollector {
 
 impl PerformanceCollector {
     pub fn new() -> Self {
+        let workspace = WorkspaceManager::default();
         Self {
-            memory: Memory::new(None),
-            perf_dir: "performance",
+            perf_dir: workspace.mullande_dir.join("performance"),
         }
+    }
+
+    fn resolve(&self, rel: &str) -> PathBuf {
+        self.perf_dir.join(rel)
+    }
+
+    fn file_exists(&self, rel: &str) -> bool {
+        self.resolve(rel).exists()
+    }
+
+    fn read_file(&self, rel: &str) -> Result<String> {
+        let path = self.resolve(rel);
+        if !path.exists() {
+            return Err(anyhow!("Performance file not found: {}", rel));
+        }
+        Ok(fs::read_to_string(path)?)
+    }
+
+    fn write_file(&self, rel: &str, content: &str) -> Result<()> {
+        let path = self.resolve(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)?;
+        Ok(())
     }
 
     fn sanitize_model_name(model_name: &str) -> String {
@@ -161,12 +187,10 @@ impl PerformanceCollector {
     }
 
     pub fn ensure_initialized(&mut self) -> Result<()> {
-        let sys_info_path = format!("{}/system_info.json", self.perf_dir);
-        if !self.memory.exists(&sys_info_path) {
+        if !self.file_exists("system_info.json") {
             let sys_info = Self::get_system_info()?;
             let json = serde_json::to_string_pretty(&sys_info)?;
-            self.memory.write_one(&sys_info_path, &json,
-                "Initialize performance tracking: capture system information");
+            self.write_file("system_info.json", &json)?;
         }
         Ok(())
     }
@@ -223,33 +247,31 @@ impl PerformanceCollector {
         };
 
         let safe_name = Self::sanitize_model_name(model_name);
-        let jsonl_path = format!("{}/{}.jsonl", self.perf_dir, safe_name);
+        let jsonl_file = format!("{}.jsonl", safe_name);
 
         let mut existing_content = String::new();
-        if self.memory.exists(&jsonl_path) {
-            existing_content = self.memory.read(&jsonl_path)?;
+        if self.file_exists(&jsonl_file) {
+            existing_content = self.read_file(&jsonl_file)?;
         }
 
         let mut new_content = existing_content;
         new_content.push_str(&serde_json::to_string(&record)?);
         new_content.push('\n');
 
-        self.memory.write_one(&jsonl_path, &new_content,
-            &format!("Record performance data for {}: {} tokens in {}s",
-                model_name, total_output_tokens, duration_seconds.round()));
+        self.write_file(&jsonl_file, &new_content)?;
 
         Ok(())
     }
 
     pub fn get_model_stats(&self, model_name: &str) -> Result<Option<ModelStats>> {
         let safe_name = Self::sanitize_model_name(model_name);
-        let jsonl_path = format!("{}/{}.jsonl", self.perf_dir, safe_name);
+        let jsonl_file = format!("{}.jsonl", safe_name);
 
-        if !self.memory.exists(&jsonl_path) {
+        if !self.file_exists(&jsonl_file) {
             return Ok(None);
         }
 
-        let content = self.memory.read(&jsonl_path)?;
+        let content = self.read_file(&jsonl_file)?;
         let mut records: Vec<PerformanceRecord> = Vec::new();
 
          for line in content.lines() {
@@ -316,17 +338,16 @@ impl PerformanceCollector {
     }
 
     pub fn list_models_with_data(&self) -> Result<Vec<String>> {
-        let files = self.memory.list_files()?;
+        if !self.perf_dir.exists() {
+            return Ok(Vec::new());
+        }
         let mut models = Vec::new();
-        let prefix = format!("{}/", self.perf_dir);
-         for file in files {
-             let file: &str = &file;
-             if file.starts_with(&prefix) && file.ends_with(".jsonl") {
-                let model_name = file.strip_prefix(&prefix)
-                    .unwrap()
-                    .strip_suffix(".jsonl")
-                    .unwrap()
-                    .replace("_", ":");
+        for entry in fs::read_dir(&self.perf_dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".jsonl") {
+                let model_name = name.strip_suffix(".jsonl").unwrap().replace("_", ":");
                 models.push(model_name);
             }
         }
@@ -334,11 +355,10 @@ impl PerformanceCollector {
     }
 
     pub fn get_system_info_cached(&self) -> Result<Option<SystemInfo>> {
-        let sys_info_path = format!("{}/system_info.json", self.perf_dir);
-        if !self.memory.exists(&sys_info_path) {
+        if !self.file_exists("system_info.json") {
             return Ok(None);
         }
-        let content = self.memory.read(&sys_info_path)?;
+        let content = self.read_file("system_info.json")?;
         Ok(Some(serde_json::from_str(&content)?))
     }
 }
