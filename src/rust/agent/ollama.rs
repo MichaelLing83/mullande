@@ -139,30 +139,42 @@ impl OllamaClient {
                           let content = &delta.content;
                           full_content.push_str(content);
 
-                          // Handle separate thinking field (new Ollama format like qwen3.5)
-                          if let Some(thinking) = &delta.thinking {
-                              current_thinking.push_str(thinking);
-                              print!("\r\x1b[K[thinking] {}", current_thinking);
-                              io::stdout().flush()?;
-                          }
-                          // Legacy: thinking inside content with <think> tags
-                          else if content.contains("<think>") || !current_thinking.is_empty() {
-                              current_thinking.push_str(content);
-                              print!("\r\x1b[K[thinking] {}", current_thinking);
-                              io::stdout().flush()?;
-                          }
+                           // Handle separate thinking field (new Ollama format like qwen3.5)
+                           if let Some(thinking) = &delta.thinking {
+                               current_thinking.push_str(thinking);
+                               // Print with [thinking] prefix on every line
+                               print!("\r\x1b[K");
+                               for line in current_thinking.lines() {
+                                   println!("[thinking] {}", line);
+                               }
+                               io::stdout().flush()?;
+                           }
+                           // Legacy: thinking inside content with <think> tags
+                           else if content.contains("<think>") || !current_thinking.is_empty() {
+                               current_thinking.push_str(content);
+                               // Print with [thinking] prefix on every line
+                               print!("\r\x1b[K");
+                               for line in current_thinking.lines() {
+                                   println!("[thinking] {}", line);
+                               }
+                               io::stdout().flush()?;
+                           }
                       }
-                      // Some responses put thinking in message instead of delta
-                      if let Some(message) = &msg.message {
-                          if let Some(thinking) = &message.thinking {
-                              current_thinking.push_str(thinking);
-                              print!("\r\x1b[K[thinking] {}", current_thinking);
-                              io::stdout().flush()?;
-                          }
-                          if !message.content.is_empty() {
-                              full_content.push_str(&message.content);
-                          }
-                      }
+                       // Some responses put thinking in message instead of delta
+                       if let Some(message) = &msg.message {
+                           if let Some(thinking) = &message.thinking {
+                               current_thinking.push_str(thinking);
+                               // Print with [thinking] prefix on every line
+                               print!("\r\x1b[K");
+                               for line in current_thinking.lines() {
+                                   println!("[thinking] {}", line);
+                               }
+                               io::stdout().flush()?;
+                           }
+                           if !message.content.is_empty() {
+                               full_content.push_str(&message.content);
+                           }
+                       }
                     if msg.done {
                         break;
                     }
