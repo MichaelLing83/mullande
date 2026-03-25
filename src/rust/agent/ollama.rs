@@ -146,9 +146,8 @@ impl OllamaClient {
                             if let Some(thinking) = &delta.thinking {
                                 if !thinking.is_empty() {
                                     current_thinking.push_str(thinking);
-                                    // Print [thinking] prefix only once at the start
                                     if !thinking_started {
-                                        print!("[thinking] ");
+                                        print!("\x1b[90m[thinking] ");
                                         thinking_started = true;
                                     }
                                     print!("{}", thinking);
@@ -158,9 +157,8 @@ impl OllamaClient {
                             // Legacy: thinking inside content with <think> tags
                             else if delta.content.contains("<think>") || !current_thinking.is_empty() {
                                 current_thinking.push_str(&delta.content);
-                                // Print [thinking] prefix only once at the start
                                 if !thinking_started {
-                                    print!("[thinking] ");
+                                    print!("\x1b[90m[thinking] ");
                                     thinking_started = true;
                                 }
                                 print!("{}", delta.content);
@@ -173,9 +171,8 @@ impl OllamaClient {
                              if let Some(thinking) = &message.thinking {
                                  if !thinking.is_empty() {
                                      current_thinking.push_str(thinking);
-                                     // Print [thinking] prefix only once at the start
                                      if !thinking_started {
-                                         print!("[thinking] ");
+                                         print!("\x1b[90m[thinking] ");
                                          thinking_started = true;
                                      }
                                      print!("{}", thinking);
@@ -201,8 +198,9 @@ impl OllamaClient {
             }
         }
 
-        // Final newline after done thinking to clear the thinking line
+        // Reset color and print final newline after thinking block
         if !current_thinking.is_empty() {
+            print!("\x1b[0m");
             println!();
         }
 
@@ -283,7 +281,7 @@ impl OllamaClient {
                                     }
                                     current_thinking.push_str(thinking);
                                     if !thinking_started {
-                                        print!("[thinking] ");
+                                        print!("\x1b[90m[thinking] ");
                                         thinking_started = true;
                                     }
                                     print!("{}", thinking);
@@ -298,7 +296,7 @@ impl OllamaClient {
                                 }
                                 current_thinking.push_str(&delta.content);
                                 if !thinking_started {
-                                    print!("[thinking] ");
+                                    print!("\x1b[90m[thinking] ");
                                     thinking_started = true;
                                 }
                                 print!("{}", delta.content);
@@ -320,7 +318,7 @@ impl OllamaClient {
                                      }
                                      current_thinking.push_str(thinking);
                                      if !thinking_started {
-                                         print!("[thinking] ");
+                                         print!("\x1b[90m[thinking] ");
                                          thinking_started = true;
                                      }
                                      print!("{}", thinking);
@@ -349,8 +347,9 @@ impl OllamaClient {
             }
         }
 
-        // Final newline after done thinking to clear the thinking line
+        // Reset color and print final newline after thinking block
         if !current_thinking.is_empty() {
+            print!("\x1b[0m");
             println!();
         }
 
