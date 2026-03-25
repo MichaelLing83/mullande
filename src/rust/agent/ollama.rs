@@ -145,24 +145,14 @@ impl OllamaClient {
                             if let Some(thinking) = &delta.thinking {
                                 if !thinking.is_empty() {
                                     current_thinking.push_str(thinking);
-                                    // Print each line from this chunk with [thinking] prefix
-                                    for line in thinking.lines() {
-                                        if !line.is_empty() {
-                                            println!("[thinking] {}", line);
-                                        }
-                                    }
+                                    print!("[thinking] {}", thinking);
                                     io::stdout().flush()?;
                                 }
                             }
                             // Legacy: thinking inside content with <think> tags
                             else if delta.content.contains("<think>") || !current_thinking.is_empty() {
                                 current_thinking.push_str(&delta.content);
-                                // Print each line from this chunk with [thinking] prefix
-                                for line in delta.content.lines() {
-                                    if !line.is_empty() {
-                                        println!("[thinking] {}", line);
-                                    }
-                                }
+                                print!("[thinking] {}", delta.content);
                                 io::stdout().flush()?;
                             }
                       }
@@ -172,12 +162,7 @@ impl OllamaClient {
                              if let Some(thinking) = &message.thinking {
                                  if !thinking.is_empty() {
                                      current_thinking.push_str(thinking);
-                                     // Print each line from this chunk with [thinking] prefix
-                                     for line in thinking.lines() {
-                                         if !line.is_empty() {
-                                             println!("[thinking] {}", line);
-                                         }
-                                     }
+                                     print!("[thinking] {}", thinking);
                                      io::stdout().flush()?;
                                  }
                              }
