@@ -5,7 +5,6 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use prettytable::{Table, Row, Cell};
 
 use crate::agent::AgentSystem;
 use crate::config::{get_config, Config, ModelConfig};
@@ -42,19 +41,13 @@ pub enum Commands {
 
         input: Option<String>,
     },
-
-    /// Start interactive chat session with Agent
-    Chat,
-
     /// Show, validate, or interactively edit configuration
     Config {
-        #[arg(short, long)]
         output: Option<String>,
 
         #[arg(long)]
         check: bool,
 
-        #[arg(long)]
         edit: bool,
 
         #[arg(short, long, help = "Import models from external source: currently only 'ollama' is supported")]
@@ -63,7 +56,6 @@ pub enum Commands {
         #[arg(long, help = "When importing from ollama, interactively select new cloud models to add (don't synchronize, just add selected)")]
         cloud: bool,
     },
-
     /// Show version information
     Version,
 }
@@ -96,10 +88,7 @@ pub fn main() -> Result<()> {
         }
          Some(Commands::Run { model, prompt, timeout, verbose, input }) => {
              run_command(model, prompt, timeout, verbose, input)
-         }
-        Some(Commands::Chat) => {
-            chat_command()
-        }
+          }
         Some(Commands::Config { output, check, edit, import, cloud }) => {
             config_command(output, check, edit, import, cloud, &workspace)
         }
@@ -147,129 +136,7 @@ fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u6
     Ok(())
 }
 
-fn chat_command() -> Result<()> {
-    println!("{}", "Starting interactive chat session (Ctrl+C to exit)".yellow());
-    let mut agent = AgentSystem::new(None);
 
-    let stdin = std::io::stdin();
-    loop {
-        print!("{} ", "You >".blue());
-        std::io::Write::flush(&mut std::io::stdout())?;
-        let mut prompt = String::new();
-        match stdin.read_line(&mut prompt) {
-            Ok(0) => break,
-            Ok(_) => {
-                let prompt = prompt.trim();
-                if prompt.starts_with('/') {
-                    handle_special_command(prompt, &mut agent);
-                    continue;
-                }
-                if prompt.is_empty() {
-                    continue;
-                }
-                 match agent.process(prompt) {
-                     Ok(result) => {
-                         println!("\n{} {}", "Agent >".green(), result.content);
-                     }
-                     Err(e) => {
-                         println!("\n{} {}", "Error:".red(), e);
-                     }
-                 }
-            }
-            Err(e) => {
-                println!("{} {}", "Error reading input:".red(), e);
-                break;
-            }
-        }
-    }
-    println!("\nExiting chat...");
-    Ok(())
-}
-
-fn handle_special_command(cmd: &str, agent: &mut AgentSystem) {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-    let command = parts[0].to_lowercase();
-
-    match command.as_str() {
-        "/models" => cmd_list_models(agent),
-        "/model" => {
-            if parts.len() < 2 {
-                println!("{} Usage: /model <model_name>", "Agent >".green());
-                println!("{} Current model: {}", "Agent >".green(), agent.effective_model_id());
-            } else {
-                cmd_switch_model(parts[1], agent);
-            }
-        }
-        "/stats" => {
-            crate::performance::show_stats();
-        }
-        "/version" => {
-            println!("{} mullande version: {}", "Agent >".green(), env!("CARGO_PKG_VERSION"));
-        }
-        "/config" => {
-            let workspace = WorkspaceManager::default();
-            let config = get_config(&workspace.mullande_dir);
-            if let Ok(config) = config {
-                println!("{} Current configuration:", "Agent >".green());
-                println!("{}", config.to_json().unwrap());
-            }
-        }
-        "/help" => {
-            println!("{} Available special commands:", "Agent >".green());
-            println!("  {}{} {}", "/models".bold(), "          ", "List all configured models");
-            println!("  {}{} {}", "/model <name>".bold(), "   ", "Switch to specified model");
-            println!("  {}{} {}", "/stats".bold(), "          ", "Show performance statistics");
-            println!("  {}{} {}", "/version".bold(), "        ", "Show mullande version");
-            println!("  {}{} {}", "/config".bold(), "         ", "Show current configuration");
-            println!("  {}{} {}", "/help".bold(), "           ", "Show this help message");
-            println!("  {}{} {}", "/exit".bold(), "          ", "Exit interactive chat");
-        }
-        "/exit" => {
-            println!("{} Exiting chat...", "Agent >".green());
-            std::process::exit(0);
-        }
-        _ => {
-            println!("{} Unknown command: {}", "Agent >".red(), command);
-            println!("{} Type /help to see available commands", "Agent >".green());
-        }
-    }
-}
-
-fn cmd_list_models(agent: &AgentSystem) {
-    let default_model = agent.effective_model_id();
-    let mut table = Table::new();
-    table.set_titles(Row::new(vec![
-        Cell::new("Model").style_spec("cFb"),
-        Cell::new("Provider").style_spec("gFb"),
-        Cell::new("Default").style_spec("yFb"),
-    ]));
-
-    let config = &agent.config;
-    table.add_row(Row::new(vec![
-        Cell::new(&config.data.model.model_id.clone().unwrap_or_default()),
-        Cell::new(&config.data.model.provider),
-        Cell::new("*default*"),
-    ]));
-
-    if let Some(models) = &config.data.models {
-        for (name, model_config) in models {
-            table.add_row(Row::new(vec![
-                Cell::new(name),
-                Cell::new(&model_config.provider),
-                Cell::new(""),
-            ]));
-        }
-    }
-
-    table.printstd();
-    println!();
-    println!("Current active model: \x1b[1;36m{}\x1b[0m", default_model);
-}
-
-fn cmd_switch_model(model_name: &str, agent: &mut AgentSystem) {
-    agent.requested_model = Some(model_name.to_string());
-    println!("{} Switched to model: \x1b[1;36m{}\x1b[0m", "✅".green(), model_name);
-}
 
 fn config_command(output: Option<String>, check: bool, edit: bool, import: Option<String>, cloud: bool, workspace: &WorkspaceManager) -> Result<()> {
     let config = get_config(&workspace.mullande_dir)?;

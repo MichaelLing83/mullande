@@ -11,10 +11,7 @@ use crate::agent::ollama::OllamaClient;
 
 pub mod ollama;
 
-#[derive(Debug, Clone)]
-pub struct AgentResponse {
-    pub content: String,
-}
+
 
 #[derive(Debug)]
 pub struct ProcessResult {
