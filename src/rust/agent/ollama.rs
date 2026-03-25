@@ -120,7 +120,6 @@ impl OllamaClient {
 
           let mut full_content = String::new();
           let mut current_thinking = String::new();
-          let mut lines_printed = 0;
 
         let reader = io::BufReader::new(response);
         for line in reader.lines() {
@@ -145,46 +144,26 @@ impl OllamaClient {
                             // Handle separate thinking field (new Ollama format like qwen3.5)
                             if let Some(thinking) = &delta.thinking {
                                 if !thinking.is_empty() {
-                                    let _previous_lines = current_thinking.lines().count();
                                     current_thinking.push_str(thinking);
-                                    // Print new lines and update incremental output
-                                    let all_lines: Vec<_> = current_thinking.lines().collect();
-                                    if all_lines.len() > lines_printed {
-                                        // Print complete new lines
-                                        for line in &all_lines[lines_printed..(all_lines.len() - 1)] {
+                                    // Print each line from this chunk with [thinking] prefix
+                                    for line in thinking.lines() {
+                                        if !line.is_empty() {
                                             println!("[thinking] {}", line);
                                         }
-                                        // Always print the last (possibly incomplete) line with clear
-                                        print!("\r\x1b[K[thinking] {}", all_lines.last().unwrap());
-                                        io::stdout().flush()?;
-                                        lines_printed = all_lines.len();
-                                    } else if !all_lines.is_empty() && lines_printed > 0 {
-                                        // Same number of lines but last line updated
-                                        print!("\r\x1b[K[thinking] {}", all_lines.last().unwrap());
-                                        io::stdout().flush()?;
                                     }
+                                    io::stdout().flush()?;
                                 }
                             }
                             // Legacy: thinking inside content with <think> tags
                             else if delta.content.contains("<think>") || !current_thinking.is_empty() {
-                                let _previous_lines = current_thinking.lines().count();
                                 current_thinking.push_str(&delta.content);
-                                // Print new lines and update incremental output
-                                let all_lines: Vec<_> = current_thinking.lines().collect();
-                                if all_lines.len() > lines_printed {
-                                    // Print complete new lines
-                                    for line in &all_lines[lines_printed..(all_lines.len() - 1)] {
+                                // Print each line from this chunk with [thinking] prefix
+                                for line in delta.content.lines() {
+                                    if !line.is_empty() {
                                         println!("[thinking] {}", line);
                                     }
-                                    // Always print the last (possibly incomplete) line with clear
-                                    print!("\r\x1b[K[thinking] {}", all_lines.last().unwrap());
-                                    io::stdout().flush()?;
-                                    lines_printed = all_lines.len();
-                                } else if !all_lines.is_empty() && lines_printed > 0 {
-                                    // Same number of lines but last line updated
-                                    print!("\r\x1b[K[thinking] {}", all_lines.last().unwrap());
-                                    io::stdout().flush()?;
                                 }
+                                io::stdout().flush()?;
                             }
                       }
                        // Some responses put thinking in message instead of delta
@@ -192,24 +171,14 @@ impl OllamaClient {
                              // Handle thinking if present
                              if let Some(thinking) = &message.thinking {
                                  if !thinking.is_empty() {
-                                     let _previous_lines = current_thinking.lines().count();
                                      current_thinking.push_str(thinking);
-                                     // Print new lines and update incremental output
-                                     let all_lines: Vec<_> = current_thinking.lines().collect();
-                                     if all_lines.len() > lines_printed {
-                                         // Print complete new lines
-                                         for line in &all_lines[lines_printed..(all_lines.len() - 1)] {
+                                     // Print each line from this chunk with [thinking] prefix
+                                     for line in thinking.lines() {
+                                         if !line.is_empty() {
                                              println!("[thinking] {}", line);
                                          }
-                                         // Always print the last (possibly incomplete) line with clear
-                                         print!("\r\x1b[K[thinking] {}", all_lines.last().unwrap());
-                                         io::stdout().flush()?;
-                                         lines_printed = all_lines.len();
-                                     } else if !all_lines.is_empty() && lines_printed > 0 {
-                                         // Same number of lines but last line updated
-                                         print!("\r\x1b[K[thinking] {}", all_lines.last().unwrap());
-                                         io::stdout().flush()?;
                                      }
+                                     io::stdout().flush()?;
                                  }
                              }
                             // Always add content to full response if it exists
