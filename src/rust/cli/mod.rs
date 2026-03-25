@@ -41,6 +41,8 @@ pub enum Commands {
 
         input: Option<String>,
     },
+    /// Show performance statistics collected from previous runs
+    Stats,
     /// Show, validate, or interactively edit configuration
     Config {
         output: Option<String>,
@@ -83,20 +85,23 @@ pub fn main() -> Result<()> {
             println!("To enable shell autocompletion:");
             println!("  Bash:  echo 'eval \"\\$(_MULLANDE_COMPLETE=bash_source mullande)\"' >> ~/.bashrc");
             println!("  Zsh:   echo 'eval \"\\$(_MULLANDE_COMPLETE=zsh_source mullande)\"' >> ~/.zshrc");
-            println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
-            Ok(())
-        }
-         Some(Commands::Run { model, prompt, timeout, verbose, input }) => {
-             run_command(model, prompt, timeout, verbose, input)
+             println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
+             Ok(())
+         }
+          Some(Commands::Run { model, prompt, timeout, verbose, input }) => {
+              run_command(model, prompt, timeout, verbose, input)
+           }
+          Some(Commands::Stats) => {
+              stats_command()
           }
-        Some(Commands::Config { output, check, edit, import, cloud }) => {
-            config_command(output, check, edit, import, cloud, &workspace)
-        }
-        Some(Commands::Version) => {
-            println!("mullande v{}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
-    }
+          Some(Commands::Config { output, check, edit, import, cloud }) => {
+              config_command(output, check, edit, import, cloud, &workspace)
+          }
+          Some(Commands::Version) => {
+              println!("mullande v{}", env!("CARGO_PKG_VERSION"));
+              Ok(())
+          }
+      }
 }
 
 fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u64>, verbose: bool, input: Option<String>) -> Result<()> {
@@ -136,7 +141,10 @@ fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u6
     Ok(())
 }
 
-
+fn stats_command() -> Result<()> {
+    crate::performance::show_stats();
+    Ok(())
+}
 
 fn config_command(output: Option<String>, check: bool, edit: bool, import: Option<String>, cloud: bool, workspace: &WorkspaceManager) -> Result<()> {
     let config = get_config(&workspace.mullande_dir)?;

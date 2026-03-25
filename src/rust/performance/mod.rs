@@ -9,7 +9,7 @@ use sys_info;
 use crate::memory::Memory;
 
 mod table;
-pub use self::table::*;
+pub use self::table::show_stats;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerformanceRecord {
