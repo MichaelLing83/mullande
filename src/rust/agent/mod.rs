@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 use anyhow::{Result, anyhow};
-use crate::config::{Config, ModelConfig};
+use crate::config::{Config, ModelConfig, ModelParams};
 use crate::performance::PerformanceCollector;
 use crate::workspace::WorkspaceManager;
 use crate::memory::Memory;
@@ -27,6 +27,7 @@ pub struct AgentSystem {
     conversation_history: Vec<String>,
     timeout: Option<std::time::Duration>,
     verbose: bool,
+    params_override: ModelParams,
 }
 
 impl AgentSystem {
@@ -41,6 +42,7 @@ impl AgentSystem {
             conversation_history,
             timeout: None,
             verbose: false,
+            params_override: ModelParams::default(),
         }
     }
 
@@ -50,6 +52,10 @@ impl AgentSystem {
 
     pub fn set_verbose(&mut self, verbose: bool) {
         self.verbose = verbose;
+    }
+
+    pub fn set_model_params(&mut self, params: ModelParams) {
+        self.params_override = params;
     }
 
     pub fn effective_model_id(&self) -> String {
@@ -92,13 +98,22 @@ impl AgentSystem {
         let context_window = self.get_context_window();
         let api_key = self.get_api_key();
 
+        // Merge config params with CLI overrides (CLI has highest priority)
+        let config_params = self.config.get_model_params(self.requested_model.as_deref());
+        let params = ModelParams {
+            temperature: self.params_override.temperature.or(config_params.temperature),
+            top_k: self.params_override.top_k.or(config_params.top_k),
+            top_p: self.params_override.top_p.or(config_params.top_p),
+            presence_penalty: self.params_override.presence_penalty.or(config_params.presence_penalty),
+        };
+
          // Build full prompt with conversation history
         let full_prompt = self.build_full_prompt(input_text);
 
         let start = std::time::Instant::now();
          let result = match provider.as_str() {
              "ollama" => {
-                 self.call_ollama(&full_prompt, &model_id, context_window, api_key)
+                 self.call_ollama(&full_prompt, &model_id, context_window, api_key, params)
              }
              "volcengine" | "copilot" => {
                  Ok((format!("Provider {} not implemented yet.\nConfiguration:\n- Provider: {}\n- Model: {}\n- Context window: {}",
@@ -159,7 +174,7 @@ impl AgentSystem {
         full.trim_end().to_string()
     }
 
-      fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>) -> Result<(String, f64, f64, f64, usize, usize)> {
+      fn call_ollama(&self, prompt: &str, model: &str, context_window: u32, api_key: Option<String>, params: ModelParams) -> Result<(String, f64, f64, f64, usize, usize)> {
            let base_url = self.model_config().base_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
            let mut client = OllamaClient::new(&base_url, api_key);
            if let Some(timeout) = self.timeout {
@@ -168,7 +183,7 @@ impl AgentSystem {
            client.set_verbose(self.verbose);
 
           let start = Instant::now();
-          let result = client.chat_with_timing(model, prompt, context_window);
+          let result = client.chat_with_timing(model, prompt, context_window, &params);
           let duration = start.elapsed().as_secs_f64();
 
           match result {

@@ -6,6 +6,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Default)]
+pub struct ModelParams {
+    pub temperature: Option<f32>,
+    pub top_k: Option<u32>,
+    pub top_p: Option<f32>,
+    pub presence_penalty: Option<f32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub provider: String,
@@ -17,6 +25,14 @@ pub struct ModelConfig {
     pub context_window: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
 }
 
 impl Default for ModelConfig {
@@ -27,6 +43,10 @@ impl Default for ModelConfig {
             base_url: Some("http://localhost:11434".to_string()),
             context_window: None,
             api_key_env: None,
+            temperature: None,
+            top_k: None,
+            top_p: None,
+            presence_penalty: None,
         }
     }
 }
@@ -86,6 +106,18 @@ impl Config {
                         if config.api_key_env.is_some() {
                             merged.api_key_env = config.api_key_env.clone();
                         }
+                        if config.temperature.is_some() {
+                            merged.temperature = config.temperature;
+                        }
+                        if config.top_k.is_some() {
+                            merged.top_k = config.top_k;
+                        }
+                        if config.top_p.is_some() {
+                            merged.top_p = config.top_p;
+                        }
+                        if config.presence_penalty.is_some() {
+                            merged.presence_penalty = config.presence_penalty;
+                        }
                         merged
                     } else {
                         self.data.model.clone()
@@ -94,6 +126,16 @@ impl Config {
                     self.data.model.clone()
                 }
             }
+        }
+    }
+
+    pub fn get_model_params(&self, model_id: Option<&str>) -> ModelParams {
+        let cfg = self.get_model_config(model_id);
+        ModelParams {
+            temperature: cfg.temperature,
+            top_k: cfg.top_k,
+            top_p: cfg.top_p,
+            presence_penalty: cfg.presence_penalty,
         }
     }
 

@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 
 use crate::agent::AgentSystem;
-use crate::config::{get_config, Config, ModelConfig};
+use crate::config::{get_config, Config, ModelConfig, ModelParams};
 use crate::workspace::WorkspaceManager;
 use crate::logging::Logger;
 use crate::agent::ollama::OllamaClient;
@@ -38,6 +38,18 @@ pub enum Commands {
 
         #[arg(short, long, help = "Enable verbose output for debugging")]
         verbose: bool,
+
+        #[arg(long, help = "Sampling temperature (e.g. 0.7); overrides config")]
+        temperature: Option<f32>,
+
+        #[arg(long, help = "Top-K sampling; overrides config")]
+        top_k: Option<u32>,
+
+        #[arg(long, help = "Top-P (nucleus) sampling (e.g. 0.9); overrides config")]
+        top_p: Option<f32>,
+
+        #[arg(long, help = "Presence penalty; overrides config")]
+        presence_penalty: Option<f32>,
 
         input: Option<String>,
     },
@@ -88,8 +100,8 @@ pub fn main() -> Result<()> {
              println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
              Ok(())
          }
-          Some(Commands::Run { model, prompt, timeout, verbose, input }) => {
-              run_command(model, prompt, timeout, verbose, input)
+          Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, input }) => {
+              run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, input)
            }
           Some(Commands::Stats) => {
               stats_command()
@@ -104,12 +116,20 @@ pub fn main() -> Result<()> {
       }
 }
 
-fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u64>, verbose: bool, input: Option<String>) -> Result<()> {
+fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u64>, verbose: bool,
+               temperature: Option<f32>, top_k: Option<u32>, top_p: Option<f32>, presence_penalty: Option<f32>,
+               input: Option<String>) -> Result<()> {
     let mut agent = AgentSystem::new(model);
     if let Some(timeout) = timeout {
         agent.set_timeout(std::time::Duration::from_secs(timeout));
     }
     agent.set_verbose(verbose);
+
+    let cli_params = ModelParams { temperature, top_k, top_p, presence_penalty };
+    if cli_params.temperature.is_some() || cli_params.top_k.is_some()
+        || cli_params.top_p.is_some() || cli_params.presence_penalty.is_some() {
+        agent.set_model_params(cli_params);
+    }
 
     let content = match (input, prompt) {
         (Some(input), _) => {
@@ -219,6 +239,10 @@ fn import_ollama_models(mut config: Config, import_cloud: bool, _workspace: &Wor
                 base_url: Some(base_url.clone()),
                 context_window: None,
                 api_key_env: None,
+                temperature: None,
+                top_k: None,
+                top_p: None,
+                presence_penalty: None,
             });
             added += 1;
         }
@@ -301,6 +325,10 @@ fn import_ollama_models(mut config: Config, import_cloud: bool, _workspace: &Wor
                 base_url: Some(base_url.clone()),
                 context_window: None,
                 api_key_env: None,
+                temperature: None,
+                top_k: None,
+                top_p: None,
+                presence_penalty: None,
             });
             added += 1;
         }
@@ -402,6 +430,10 @@ fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -
         base_url,
         context_window,
         api_key_env,
+        temperature: None,
+        top_k: None,
+        top_p: None,
+        presence_penalty: None,
     };
 
     let mut models = config.data.models.take().unwrap_or_default();
@@ -476,6 +508,10 @@ fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -
                     base_url: bu,
                     context_window: cw,
                     api_key_env: ake,
+                    temperature: None,
+                    top_k: None,
+                    top_p: None,
+                    presence_penalty: None,
                 });
 
                 if !Confirm::new()

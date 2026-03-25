@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write, BufRead};
+use crate::config::ModelParams;
 
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
@@ -24,6 +25,14 @@ pub struct ChatMessage {
 pub struct ChatOptions {
     #[serde(rename = "num_ctx")]
     pub num_ctx: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,13 +97,27 @@ impl OllamaClient {
         Ok(builder.build()?)
     }
 
-    pub fn chat(&self, model: &str, prompt: &str, context_window: u32) -> Result<String> {
+    fn build_options(context_window: u32, params: &ModelParams) -> Option<ChatOptions> {
+        let has_ctx = context_window > 0;
+        let has_params = params.temperature.is_some()
+            || params.top_k.is_some()
+            || params.top_p.is_some()
+            || params.presence_penalty.is_some();
+        if !has_ctx && !has_params {
+            return None;
+        }
+        Some(ChatOptions {
+            num_ctx: context_window,
+            temperature: params.temperature,
+            top_k: params.top_k,
+            top_p: params.top_p,
+            presence_penalty: params.presence_penalty,
+        })
+    }
+
+    pub fn chat(&self, model: &str, prompt: &str, context_window: u32, params: &ModelParams) -> Result<String> {
         let client = self.make_client()?;
-        let options = if context_window > 0 {
-            Some(ChatOptions { num_ctx: context_window })
-        } else {
-            None
-        };
+        let options = Self::build_options(context_window, params);
 
         let req = ChatRequest {
             model: model.to_string(),
@@ -207,13 +230,9 @@ impl OllamaClient {
         Ok(full_content)
     }
 
-    pub fn chat_with_timing(&self, model: &str, prompt: &str, context_window: u32) -> Result<(String, f64, f64, usize, usize)> {
+    pub fn chat_with_timing(&self, model: &str, prompt: &str, context_window: u32, params: &ModelParams) -> Result<(String, f64, f64, usize, usize)> {
         let client = self.make_client()?;
-        let options = if context_window > 0 {
-            Some(ChatOptions { num_ctx: context_window })
-        } else {
-            None
-        };
+        let options = Self::build_options(context_window, params);
 
         let req = ChatRequest {
             model: model.to_string(),
