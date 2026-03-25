@@ -5,3 +5,6 @@ __pycache__
 # Added by cargo
 
 /target
+# Stray mullande output files
+--model
+qwen3.5*
