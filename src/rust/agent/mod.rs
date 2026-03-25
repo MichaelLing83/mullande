@@ -137,7 +137,7 @@ impl AgentSystem {
          }
     }
 
-    fn build_full_prompt(&self, _new_input: &str) -> String {
+    fn build_full_prompt(&self, new_input: &str) -> String {
         let mut full = String::new();
 
         // Build conversation history in a format that works well with LLMs
@@ -151,10 +151,10 @@ impl AgentSystem {
             full.push_str("\n\n");
         }
 
-        // Add the new input (it's already in conversation_history)
-        if self.conversation_history.len() % 2 == 1 {
-            full.push_str("### Assistant:\n");
-        }
+        // Add the new input
+        full.push_str("### User:\n");
+        full.push_str(new_input);
+        full.push_str("\n\n");
 
         full.trim_end().to_string()
     }
