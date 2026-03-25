@@ -120,6 +120,7 @@ impl OllamaClient {
 
           let mut full_content = String::new();
           let mut current_thinking = String::new();
+          let mut thinking_started = false;
 
         let reader = io::BufReader::new(response);
         for line in reader.lines() {
@@ -145,14 +146,24 @@ impl OllamaClient {
                             if let Some(thinking) = &delta.thinking {
                                 if !thinking.is_empty() {
                                     current_thinking.push_str(thinking);
-                                    print!("[thinking] {}", thinking);
+                                    // Print [thinking] prefix only once at the start
+                                    if !thinking_started {
+                                        print!("[thinking] ");
+                                        thinking_started = true;
+                                    }
+                                    print!("{}", thinking);
                                     io::stdout().flush()?;
                                 }
                             }
                             // Legacy: thinking inside content with <think> tags
                             else if delta.content.contains("<think>") || !current_thinking.is_empty() {
                                 current_thinking.push_str(&delta.content);
-                                print!("[thinking] {}", delta.content);
+                                // Print [thinking] prefix only once at the start
+                                if !thinking_started {
+                                    print!("[thinking] ");
+                                    thinking_started = true;
+                                }
+                                print!("{}", delta.content);
                                 io::stdout().flush()?;
                             }
                       }
@@ -162,7 +173,12 @@ impl OllamaClient {
                              if let Some(thinking) = &message.thinking {
                                  if !thinking.is_empty() {
                                      current_thinking.push_str(thinking);
-                                     print!("[thinking] {}", thinking);
+                                     // Print [thinking] prefix only once at the start
+                                     if !thinking_started {
+                                         print!("[thinking] ");
+                                         thinking_started = true;
+                                     }
+                                     print!("{}", thinking);
                                      io::stdout().flush()?;
                                  }
                              }
