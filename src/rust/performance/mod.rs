@@ -101,11 +101,11 @@ impl PerformanceCollector {
         let os_version = "".to_string();
         let arch = std::env::consts::ARCH.to_string();
 
-        let cpu_logical = sys_info::cpu_num().ok().map(|x| x as usize);
-        let cpu_physical = sys_info::cpu_num().ok().map(|x| x as usize);
+         let cpu_logical = sys_info::cpu_num().ok().map(|x| x as usize);
+         let cpu_physical = None;
 
-        let mem = sys_info::mem_info()?;
-        let mem_total_gb = (mem.total as f64) / (1024.0 * 1024.0) / 1000.0;
+         let mem = sys_info::mem_info()?;
+         let mem_total_gb = (mem.total as f64) / (1024.0 * 1024.0);
 
         let ollama_version = PerformanceCollector::get_ollama_version();
 

@@ -5,7 +5,8 @@ use crate::performance::{PerformanceCollector, ModelStats};
 use anyhow::Result;
 
 pub fn show_stats() {
-    let collector = PerformanceCollector::new();
+    let mut collector = PerformanceCollector::new();
+    let _ = collector.ensure_initialized();
     let mut table = Table::new();
     table.set_titles(Row::new(vec![
         Cell::new("Model").style_spec("cFb"),
