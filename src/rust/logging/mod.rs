@@ -58,9 +58,40 @@ impl Logger {
     }
 
     pub fn log_interaction(&self, model: &str, user_input: &str, full_prompt: &str, agent_response: &str) -> Result<()> {
-        self.initialize()?;
+        self.write_interaction_log(model, user_input, full_prompt, None, agent_response)
+    }
 
+    pub fn log_interaction_with_tools(
+        &self,
+        model: &str,
+        user_input: &str,
+        full_prompt: &str,
+        tool_calls_log: &str,
+        agent_response: &str,
+    ) -> Result<()> {
+        self.write_interaction_log(model, user_input, full_prompt, Some(tool_calls_log), agent_response)
+    }
+
+    fn write_interaction_log(
+        &self,
+        model: &str,
+        user_input: &str,
+        full_prompt: &str,
+        tool_calls_log: Option<&str>,
+        agent_response: &str,
+    ) -> Result<()> {
+        self.initialize()?;
         let timestamp = Utc::now().to_rfc3339();
+
+        let tools_section = match tool_calls_log {
+            Some(log) if !log.is_empty() => format!(
+                "================================================================================\n\
+TOOL CALLS:\n\
+{}\n",
+                log
+            ),
+            _ => String::new(),
+        };
 
         let content = if user_input == full_prompt {
             format!(
@@ -70,12 +101,12 @@ Model: {}\n\
 ================================================================================\n\
 USER INPUT / FULL PROMPT:\n\
 {}\n\
-================================================================================\n\
+{}================================================================================\n\
 AGENT RESPONSE:\n\
 {}\n\
 ================================================================================\n\
 ",
-                timestamp, model, user_input.trim(), agent_response.trim()
+                timestamp, model, user_input.trim(), tools_section, agent_response.trim()
             )
         } else {
             format!(
@@ -88,16 +119,15 @@ USER INPUT:\n\
 ================================================================================\n\
 FULL PROMPT (sent to model):\n\
 {}\n\
-================================================================================\n\
+{}================================================================================\n\
 AGENT RESPONSE:\n\
 {}\n\
 ================================================================================\n\
 ",
-                timestamp, model, user_input.trim(), full_prompt.trim(), agent_response.trim()
+                timestamp, model, user_input.trim(), full_prompt.trim(), tools_section, agent_response.trim()
             )
         };
 
-        // 1. Write to daily summary log
         let daily_log_path = self.get_daily_log_path();
         if daily_log_path.exists() {
             fs::write(&daily_log_path, fs::read_to_string(&daily_log_path)? + &content + "\n")?;
@@ -106,7 +136,6 @@ AGENT RESPONSE:\n\
             fs::write(&daily_log_path, header + &content + "\n")?;
         }
 
-        // 2. Write to separate per-interaction file
         let interaction_path = self.get_interaction_file_path();
         fs::write(&interaction_path, content)?;
 

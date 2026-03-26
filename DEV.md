@@ -5,7 +5,7 @@
 mullande 是用 Rust 实现的大模型 Agent 系统，通过 Ollama 调用本地或远程模型。
 
 ```
-mullande run / chat
+mullande run
        │
        ▼
   AgentSystem::process()

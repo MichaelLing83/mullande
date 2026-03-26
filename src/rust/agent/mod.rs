@@ -22,6 +22,14 @@ pub struct ProcessResult {
     pub duration_seconds: f64,
 }
 
+#[derive(Debug)]
+struct ToolCallRecord {
+    iteration: usize,
+    name: String,
+    args: String,
+    result: String,
+}
+
 pub struct AgentSystem {
     pub config: Config,
     pub requested_model: Option<String>,
@@ -30,6 +38,7 @@ pub struct AgentSystem {
     verbose: bool,
     params_override: ModelParams,
     tools_enabled: bool,
+    last_tool_calls: Vec<ToolCallRecord>,
 }
 
 impl AgentSystem {
@@ -46,6 +55,7 @@ impl AgentSystem {
             verbose: false,
             params_override: ModelParams::default(),
             tools_enabled: false,
+            last_tool_calls: Vec::new(),
         }
     }
 
@@ -215,14 +225,31 @@ impl AgentSystem {
         let mut memory = Memory::new(None);
         let _ = memory.append_to_conversation(user_input, agent_response, model);
 
-        // Log interaction to .mullande/.logs including full prompt
         let workspace = WorkspaceManager::default();
         let logger = Logger::new(workspace);
-        let _ = logger.log_interaction(model, user_input, full_prompt, agent_response);
+
+        if self.last_tool_calls.is_empty() {
+            let _ = logger.log_interaction(model, user_input, full_prompt, agent_response);
+        } else {
+            let mut tool_log = String::new();
+            for record in &self.last_tool_calls {
+                tool_log.push_str(&format!(
+                    "[{}] {}({})\n    Result:\n{}\n",
+                    record.iteration,
+                    record.name,
+                    record.args,
+                    record.result.lines()
+                        .map(|l| format!("    {}", l))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ));
+            }
+            let _ = logger.log_interaction_with_tools(model, user_input, full_prompt, &tool_log, agent_response);
+        }
     }
 
     fn call_ollama_with_tools(
-        &self,
+        &mut self,
         prompt: &str,
         model: &str,
         context_window: u32,
@@ -248,15 +275,14 @@ impl AgentSystem {
         let start = Instant::now();
         let max_iterations = 15;
         let mut final_answer = String::new();
+        self.last_tool_calls.clear();
 
         for iteration in 0..max_iterations {
             let response = client.send_messages(model, messages.clone(), context_window, &params, tool_defs.clone())?;
 
             if let Some(calls) = response.tool_calls.as_ref().filter(|c| !c.is_empty()) {
-                // Push assistant message (with tool_calls) to history
                 messages.push(response.clone());
 
-                // Execute each tool call and add results
                 for tc in calls {
                     let args_display = serde_json::to_string(&tc.function.arguments)
                         .unwrap_or_else(|_| "{}".to_string());
@@ -270,6 +296,13 @@ impl AgentSystem {
                     let suffix = if result.len() > 200 { "…" } else { "" };
                     println!("\x1b[90m{}{}\x1b[0m", preview, suffix);
 
+                    self.last_tool_calls.push(ToolCallRecord {
+                        iteration: iteration + 1,
+                        name: tc.function.name.clone(),
+                        args: args_display,
+                        result: result.clone(),
+                    });
+
                     messages.push(ChatMessage {
                         role: "tool".to_string(),
                         content: result,
@@ -278,7 +311,6 @@ impl AgentSystem {
                     });
                 }
             } else {
-                // No tool calls — this is the final answer
                 final_answer = response.content.clone();
                 break;
             }
