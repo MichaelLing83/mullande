@@ -20,6 +20,18 @@ pub fn show_stats() {
         Cell::new("Ans/Total").style_spec("rFb"),
     ]));
 
+    let mut tool_table = Table::new();
+    tool_table.set_titles(Row::new(vec![
+        Cell::new("Model").style_spec("cFb"),
+        Cell::new("Tool Calls").style_spec("rFb"),
+        Cell::new("Avg Rounds").style_spec("rFb"),
+        Cell::new("Tool Toks").style_spec("rFb"),
+        Cell::new("Tool/s").style_spec("rFb"),
+        Cell::new("Exec Time").style_spec("rFb"),
+        Cell::new("Ollama Time").style_spec("rFb"),
+    ]));
+    let mut has_tool_data = false;
+
     let mut total_calls_all = 0;
     match collector.list_models_with_data() {
         Ok(models) => {
@@ -38,6 +50,19 @@ pub fn show_stats() {
                         Cell::new(&format!("{:.1}", stats.answering_tokens_per_total_time)),
                     ]));
                     total_calls_all += stats.total_calls;
+
+                    if stats.tool_calls_count > 0 {
+                        has_tool_data = true;
+                        tool_table.add_row(Row::new(vec![
+                            Cell::new(&stats.model_name),
+                            Cell::new(&stats.tool_calls_count.to_string()),
+                            Cell::new(&format!("{:.1}", stats.avg_tool_call_rounds)),
+                            Cell::new(&format!("{:.1}", stats.avg_tool_call_tokens)),
+                            Cell::new(&format!("{:.1}", stats.tool_tokens_per_second)),
+                            Cell::new(&format!("{:.2}s", stats.avg_tool_exec_time_seconds)),
+                            Cell::new(&format!("{:.2}s", stats.avg_tool_ollama_time_seconds)),
+                        ]));
+                    }
                 }
             }
 
@@ -90,6 +115,19 @@ pub fn show_stats() {
             println!("  \x1b[33mAns/s\x1b[0m = Answering tokens / Answering time");
             println!("  \x1b[33mAns/Total\x1b[0m = Answering tokens / Total time");
             println!();
+
+            if has_tool_data {
+                println!("\n\x1b[1;34mTool Call Metrics (avg per tool-enabled call)\x1b[0m");
+                println!("  \x1b[33mTool Calls\x1b[0m = Number of runs that used tools");
+                println!("  \x1b[33mAvg Rounds\x1b[0m = Average tool invocations per run");
+                println!("  \x1b[33mTool Toks\x1b[0m = Tokens Ollama generated for tool decisions");
+                println!("  \x1b[33mTool/s\x1b[0m = Tool-decision tokens / Ollama time (tool rounds)");
+                println!("  \x1b[33mExec Time\x1b[0m = Avg time executing tool functions locally");
+                println!("  \x1b[33mOllama Time\x1b[0m = Avg Ollama eval time for tool-planning rounds");
+                println!();
+                tool_table.printstd();
+                println!();
+            }
             
             println!("\n\x1b[1mTotal recorded calls across all models: {}\x1b[0m", total_calls_all);
         }

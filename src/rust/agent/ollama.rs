@@ -53,6 +53,19 @@ pub struct ChatOptions {
     pub presence_penalty: Option<f32>,
 }
 
+/// Token and timing metrics returned by Ollama for a non-streaming request.
+#[derive(Debug, Clone, Default)]
+pub struct OllamaCallMetrics {
+    /// Number of tokens generated in the response.
+    pub eval_count: usize,
+    /// Number of input tokens processed.
+    pub prompt_eval_count: usize,
+    /// Time Ollama spent generating tokens (nanoseconds).
+    pub eval_duration_ns: u64,
+    /// Total time for the request including model load (nanoseconds).
+    pub total_duration_ns: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ChatResponse {
     pub message: Option<ChatMessage>,
@@ -435,7 +448,7 @@ impl OllamaClient {
     }
 
     /// Send a list of messages (non-streaming) with optional tool definitions.
-    /// Returns the assistant's response message, which may contain tool_calls.
+    /// Returns the assistant's response message and Ollama call metrics.
     pub fn send_messages(
         &self,
         model: &str,
@@ -443,7 +456,7 @@ impl OllamaClient {
         context_window: u32,
         params: &ModelParams,
         tools: Vec<serde_json::Value>,
-    ) -> Result<ChatMessage> {
+    ) -> Result<(ChatMessage, OllamaCallMetrics)> {
         let client = self.make_client()?;
         let options = Self::build_options(context_window, params);
         let tools_opt = if tools.is_empty() { None } else { Some(tools) };
@@ -467,10 +480,16 @@ impl OllamaClient {
         }
 
         let body: serde_json::Value = response.json()?;
+        let metrics = OllamaCallMetrics {
+            eval_count: body.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            prompt_eval_count: body.get("prompt_eval_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            eval_duration_ns: body.get("eval_duration").and_then(|v| v.as_u64()).unwrap_or(0),
+            total_duration_ns: body.get("total_duration").and_then(|v| v.as_u64()).unwrap_or(0),
+        };
         if let Some(msg) = body.get("message") {
             let message: ChatMessage = serde_json::from_value(msg.clone())
                 .map_err(|e| anyhow!("Failed to parse message: {}", e))?;
-            return Ok(message);
+            return Ok((message, metrics));
         }
         Err(anyhow!("No message field in response: {}", body))
     }

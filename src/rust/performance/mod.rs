@@ -11,6 +11,19 @@ use crate::workspace::WorkspaceManager;
 mod table;
 pub use self::table::show_stats;
 
+/// Tool-call specific metrics for a single run.
+#[derive(Debug, Default)]
+pub struct ToolCallStats {
+    /// Number of tool invocations in this run.
+    pub rounds: usize,
+    /// Tokens Ollama generated for tool-planning decisions.
+    pub tool_call_tokens: usize,
+    /// Wall-clock seconds spent executing tool functions (not waiting on Ollama).
+    pub tool_exec_time_seconds: f64,
+    /// Ollama eval time (seconds) for tool-planning rounds.
+    pub tool_ollama_time_seconds: f64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerformanceRecord {
     pub timestamp: String,
@@ -23,6 +36,18 @@ pub struct PerformanceRecord {
     pub answering_time_seconds: f64,
     pub thinking_tokens: usize,
     pub answering_tokens: usize,
+    /// Number of tool invocations (0 for non-tool runs).
+    #[serde(default)]
+    pub tool_call_rounds: usize,
+    /// Tokens Ollama generated for tool-planning decisions.
+    #[serde(default)]
+    pub tool_call_tokens: usize,
+    /// Seconds spent executing tool functions locally.
+    #[serde(default)]
+    pub tool_exec_time_seconds: f64,
+    /// Ollama eval time (seconds) for tool-planning rounds.
+    #[serde(default)]
+    pub tool_ollama_time_seconds: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -87,6 +112,14 @@ pub struct ModelStats {
     pub thinking_tokens_per_second: f64,
     pub answering_tokens_per_second: f64,
     pub answering_tokens_per_total_time: f64,
+    /// Number of calls that used tools.
+    pub tool_calls_count: usize,
+    pub avg_tool_call_rounds: f64,
+    pub avg_tool_call_tokens: f64,
+    pub avg_tool_exec_time_seconds: f64,
+    pub avg_tool_ollama_time_seconds: f64,
+    /// Average tool-call tokens per second (tool_call_tokens / tool_ollama_time).
+    pub tool_tokens_per_second: f64,
 }
 
 pub struct PerformanceCollector {
@@ -206,6 +239,7 @@ impl PerformanceCollector {
         answering_time_seconds: f64,
         thinking_tokens: usize,
         answering_tokens: usize,
+        tool_stats: Option<&ToolCallStats>,
     ) -> Result<()> {
         self.ensure_initialized()?;
 
@@ -222,6 +256,10 @@ impl PerformanceCollector {
         } else {
             0.0
         };
+
+        let (tool_call_rounds, tool_call_tokens, tool_exec_time_seconds, tool_ollama_time_seconds) =
+            tool_stats.map(|t| (t.rounds, t.tool_call_tokens, t.tool_exec_time_seconds, t.tool_ollama_time_seconds))
+                .unwrap_or((0, 0, 0.0, 0.0));
 
         let record = PerformanceRecord {
             timestamp: Utc::now().to_rfc3339(),
@@ -244,6 +282,10 @@ impl PerformanceCollector {
             answering_time_seconds,
             thinking_tokens,
             answering_tokens,
+            tool_call_rounds,
+            tool_call_tokens,
+            tool_exec_time_seconds,
+            tool_ollama_time_seconds,
         };
 
         let safe_name = Self::sanitize_model_name(model_name);
@@ -299,6 +341,32 @@ impl PerformanceCollector {
         let total_thinking_tokens: usize = records.iter().map(|r| r.thinking_tokens).sum();
         let total_answering_tokens: usize = records.iter().map(|r| r.answering_tokens).sum();
 
+        // Tool call aggregates (only over calls that actually used tools)
+        let tool_records: Vec<&PerformanceRecord> = records.iter().filter(|r| r.tool_call_rounds > 0).collect();
+        let tool_calls_count = tool_records.len();
+        let total_tool_rounds: usize = tool_records.iter().map(|r| r.tool_call_rounds).sum();
+        let total_tool_call_tokens: usize = tool_records.iter().map(|r| r.tool_call_tokens).sum();
+        let total_tool_exec_time: f64 = tool_records.iter().map(|r| r.tool_exec_time_seconds).sum();
+        let total_tool_ollama_time: f64 = tool_records.iter().map(|r| r.tool_ollama_time_seconds).sum();
+
+        let (avg_tool_call_rounds, avg_tool_call_tokens, avg_tool_exec_time_seconds, avg_tool_ollama_time_seconds) =
+            if tool_calls_count > 0 {
+                (
+                    (total_tool_rounds as f64) / (tool_calls_count as f64),
+                    (total_tool_call_tokens as f64) / (tool_calls_count as f64),
+                    total_tool_exec_time / (tool_calls_count as f64),
+                    total_tool_ollama_time / (tool_calls_count as f64),
+                )
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+
+        let tool_tokens_per_second = if total_tool_ollama_time > 0.0 {
+            (total_tool_call_tokens as f64) / total_tool_ollama_time
+        } else {
+            0.0
+        };
+
         let avg_thinking_tokens_per_second = if total_thinking_time > 0.0 {
             (total_thinking_tokens as f64) / total_thinking_time
         } else {
@@ -334,6 +402,12 @@ impl PerformanceCollector {
             thinking_tokens_per_second: (avg_thinking_tokens_per_second * 100.0).round() / 100.0,
             answering_tokens_per_second: (avg_answering_tokens_per_second * 100.0).round() / 100.0,
             answering_tokens_per_total_time: (avg_answering_per_total_time * 100.0).round() / 100.0,
+            tool_calls_count,
+            avg_tool_call_rounds: (avg_tool_call_rounds * 10.0).round() / 10.0,
+            avg_tool_call_tokens: (avg_tool_call_tokens * 10.0).round() / 10.0,
+            avg_tool_exec_time_seconds: (avg_tool_exec_time_seconds * 100.0).round() / 100.0,
+            avg_tool_ollama_time_seconds: (avg_tool_ollama_time_seconds * 100.0).round() / 100.0,
+            tool_tokens_per_second: (tool_tokens_per_second * 100.0).round() / 100.0,
         }))
     }
 

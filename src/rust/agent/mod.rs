@@ -8,7 +8,7 @@ use crate::performance::PerformanceCollector;
 use crate::workspace::WorkspaceManager;
 use crate::memory::Memory;
 use crate::logging::Logger;
-use crate::agent::ollama::{OllamaClient, ChatMessage};
+use crate::agent::ollama::{OllamaClient, ChatMessage, OllamaCallMetrics};
 use crate::tools::ToolRegistry;
 
 pub mod ollama;
@@ -37,6 +37,7 @@ struct OllamaRound {
     round: usize,
     request_messages: Vec<ChatMessage>,
     response: ChatMessage,
+    metrics: OllamaCallMetrics,
 }
 
 pub struct AgentSystem {
@@ -223,7 +224,7 @@ impl AgentSystem {
               Ok((r, ttft, thinking_time, thinking_tokens, answering_tokens)) => {
                   let answering_time = duration - ttft - thinking_time;
                   let mut collector = PerformanceCollector::new();
-                  let _ = collector.record_call(model, prompt, &r, duration, ttft, thinking_time, answering_time, thinking_tokens, answering_tokens);
+                  let _ = collector.record_call(model, prompt, &r, duration, ttft, thinking_time, answering_time, thinking_tokens, answering_tokens, None);
                   Ok((r, duration, ttft, thinking_time, thinking_tokens, answering_tokens))
               }
               Err(e) => {
@@ -423,17 +424,29 @@ impl AgentSystem {
         self.last_tool_calls.clear();
         self.last_ollama_rounds.clear();
 
-        for iteration in 0..max_iterations {
-            let response = client.send_messages(model, messages.clone(), context_window, &params, tool_defs.clone())?;
+        // Accumulated metrics across all rounds
+        let mut tool_call_tokens: usize = 0;      // tokens from tool-planning rounds
+        let mut tool_ollama_time_ns: u64 = 0;     // Ollama eval time for tool-planning rounds
+        let mut tool_exec_time_secs: f64 = 0.0;   // wall-clock time executing tools
+        let mut answer_tokens: usize = 0;
 
-            // Record this round before deciding what to do
+        for iteration in 0..max_iterations {
+            let (response, metrics) = client.send_messages(
+                model, messages.clone(), context_window, &params, tool_defs.clone()
+            )?;
+
             self.last_ollama_rounds.push(OllamaRound {
                 round: iteration + 1,
                 request_messages: messages.clone(),
                 response: response.clone(),
+                metrics: metrics.clone(),
             });
 
             if let Some(calls) = response.tool_calls.as_ref().filter(|c| !c.is_empty()) {
+                // This round produced tool calls — count its tokens as tool_call_tokens
+                tool_call_tokens += metrics.eval_count;
+                tool_ollama_time_ns += metrics.eval_duration_ns;
+
                 messages.push(response.clone());
 
                 for tc in calls {
@@ -442,9 +455,10 @@ impl AgentSystem {
                     println!("\x1b[36m[tool:{}] {}({})\x1b[0m",
                         iteration + 1, tc.function.name, args_display);
 
+                    let tool_start = Instant::now();
                     let result = registry.execute(&tc.function.name, &tc.function.arguments);
+                    tool_exec_time_secs += tool_start.elapsed().as_secs_f64();
 
-                    // Show a brief preview in gray
                     let preview: String = result.chars().take(200).collect();
                     let suffix = if result.len() > 200 { "…" } else { "" };
                     println!("\x1b[90m{}{}\x1b[0m", preview, suffix);
@@ -464,13 +478,35 @@ impl AgentSystem {
                     });
                 }
             } else {
+                // Final answer round
+                answer_tokens = if metrics.eval_count > 0 {
+                    metrics.eval_count
+                } else {
+                    response.content.len() / 4
+                };
                 final_answer = response.content.clone();
                 break;
             }
         }
 
         let duration = start.elapsed().as_secs_f64();
-        let answer_tokens = final_answer.len() / 4;
+        let tool_call_rounds = self.last_tool_calls.len();
+
+        // Record performance for tool-enabled run
+        let mut collector = PerformanceCollector::new();
+        let tool_ollama_time_secs = tool_ollama_time_ns as f64 / 1_000_000_000.0;
+        let _ = collector.record_call(
+            model, prompt, &final_answer,
+            duration, 0.0, 0.0, duration - tool_exec_time_secs - tool_ollama_time_secs,
+            0, answer_tokens,
+            Some(&crate::performance::ToolCallStats {
+                rounds: tool_call_rounds,
+                tool_call_tokens,
+                tool_exec_time_seconds: tool_exec_time_secs,
+                tool_ollama_time_seconds: tool_ollama_time_secs,
+            }),
+        );
+
         Ok((final_answer, duration, 0.0, 0.0, 0, answer_tokens))
     }
 }
