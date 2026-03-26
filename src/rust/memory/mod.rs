@@ -146,6 +146,95 @@ impl Memory {
             &format!("Add conversation turn using model {}: {} chars input", model, user_input.len()))
     }
 
+    /// Returns the next sequential number for a tool_calls/NNN.md file.
+    fn next_tool_call_number(&self) -> usize {
+        let dir = self.memory_dir.join("tool_calls");
+        if !dir.exists() {
+            return 1;
+        }
+        let count = fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+                    .count()
+            })
+            .unwrap_or(0);
+        count + 1
+    }
+
+    /// Save each tool call to tool_calls/NNN.md and add hyperlinks to CONVERSATIONS.md.
+    /// `tool_calls` is a slice of `(tool_name, args_json, result)`.
+    pub fn append_to_conversation_with_tools(
+        &mut self,
+        user_input: &str,
+        agent_response: &str,
+        model: &str,
+        tool_calls: &[(String, String, String)],
+    ) -> bool {
+        const CONVERSATION_PATH: &str = "CONVERSATIONS.md";
+        let timestamp = Utc::now().to_rfc3339();
+
+        // Build tool call md files and collect link entries
+        let mut file_contents: Vec<(String, String)> = Vec::new();
+        let mut tool_links: Vec<String> = Vec::new();
+        let mut next_num = self.next_tool_call_number();
+
+        for (tool_name, args_json, result) in tool_calls {
+            let rel_path = format!("tool_calls/{:03}.md", next_num);
+
+            let md_content = format!(
+                "# Tool Call {:03}\n\n**Timestamp:** {}\n**Model:** `{}`\n**Tool:** `{}`\n\n## Request\n\n```json\n{}\n```\n\n## Response\n\n```\n{}\n```\n",
+                next_num, timestamp, model, tool_name, args_json, result
+            );
+
+            // Link display: "tool_name(args_json)" truncated to 80 chars
+            let link_text_full = format!("{}({})", tool_name, args_json);
+            let display: String = link_text_full.chars().take(80).collect();
+            let display = if link_text_full.chars().count() > 80 {
+                format!("{}...", display)
+            } else {
+                display
+            };
+
+            // Relative from CONVERSATIONS.md (at memory root) to tool_calls/NNN.md
+            tool_links.push(format!("[{}]({})", display, rel_path));
+            file_contents.push((rel_path, md_content));
+            next_num += 1;
+        }
+
+        // Build CONVERSATIONS.md entry
+        let tool_section = if !tool_links.is_empty() {
+            let links = tool_links.iter().map(|l| format!("- {}", l)).collect::<Vec<_>>().join("\n");
+            format!("\n\n**Tool Calls:**\n{}", links)
+        } else {
+            String::new()
+        };
+
+        let entry = format!(
+            "\n\n---\n\n**[{}]** Model: `{}`\n\n**User:** {}{}\n\n**Agent:** {}\n",
+            timestamp, model, user_input, tool_section, agent_response
+        );
+
+        let existing_content = if self.exists(CONVERSATION_PATH) {
+            self.read(CONVERSATION_PATH).unwrap_or_default()
+        } else {
+            "# Mullande Conversation Log\n\nThis file stores all conversations from mullande run and mullande chat.\n".to_string()
+        };
+
+        file_contents.push((CONVERSATION_PATH.to_string(), existing_content + &entry));
+
+        let files: Vec<(&str, &str)> = file_contents
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        self.write_atomic(
+            files,
+            &format!("Add tool-call conversation: {} tool invocations, model {}", tool_calls.len(), model),
+        )
+    }
+
     pub fn load_conversation_history(&self) -> Result<Vec<String>> {
         const CONVERSATION_PATH: &str = "CONVERSATIONS.md";
 

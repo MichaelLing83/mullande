@@ -234,14 +234,14 @@ impl AgentSystem {
       }
 
     fn save_conversation(&mut self, user_input: &str, full_prompt: &str, agent_response: &str, model: &str) {
-        let mut memory = Memory::new(None);
-        let _ = memory.append_to_conversation(user_input, agent_response, model);
-
         let workspace = WorkspaceManager::default();
         let logger = Logger::new(workspace);
 
         if self.last_tool_calls.is_empty() {
-            // Non-tool streaming run: two JSONL entries (request + response)
+            // Non-tool streaming run
+            let mut memory = Memory::new(None);
+            let _ = memory.append_to_conversation(user_input, agent_response, model);
+
             let jsonl_entries = vec![
                 json!({
                     "event": "ollama_request",
@@ -259,7 +259,16 @@ impl AgentSystem {
             ];
             let _ = logger.log_interaction(model, user_input, full_prompt, &jsonl_entries, agent_response);
         } else {
-            // Tool-enabled run: build from recorded rounds + tool calls
+            // Tool-enabled run
+            let mut memory = Memory::new(None);
+            // Build (tool_name, args_json, result) tuples for memory storage
+            let tool_call_tuples: Vec<(String, String, String)> = self.last_tool_calls.iter()
+                .map(|r| (r.name.clone(), r.args.clone(), r.result.clone()))
+                .collect();
+            let _ = memory.append_to_conversation_with_tools(
+                user_input, agent_response, model, &tool_call_tuples,
+            );
+
             let mut tool_log = String::new();
             for record in &self.last_tool_calls {
                 tool_log.push_str(&format!(
