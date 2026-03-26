@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 use anyhow::{Result, anyhow};
+use serde_json::json;
 use crate::config::{Config, ModelConfig, ModelParams};
 use crate::performance::PerformanceCollector;
 use crate::workspace::WorkspaceManager;
@@ -239,16 +240,30 @@ impl AgentSystem {
         let logger = Logger::new(workspace);
 
         if self.last_tool_calls.is_empty() {
-            let _ = logger.log_interaction(model, user_input, full_prompt, agent_response);
+            // Non-tool streaming run: two JSONL entries (request + response)
+            let jsonl_entries = vec![
+                json!({
+                    "event": "ollama_request",
+                    "round": 1,
+                    "model": model,
+                    "messages": [{"role": "user", "content": full_prompt}]
+                }),
+                json!({
+                    "event": "ollama_response",
+                    "round": 1,
+                    "model": model,
+                    "role": "assistant",
+                    "content": agent_response
+                }),
+            ];
+            let _ = logger.log_interaction(model, user_input, full_prompt, &jsonl_entries, agent_response);
         } else {
-            // Format tool calls summary
+            // Tool-enabled run: build from recorded rounds + tool calls
             let mut tool_log = String::new();
             for record in &self.last_tool_calls {
                 tool_log.push_str(&format!(
                     "[{}] {}({})\n    Result:\n{}\n",
-                    record.iteration,
-                    record.name,
-                    record.args,
+                    record.iteration, record.name, record.args,
                     record.result.lines()
                         .map(|l| format!("    {}", l))
                         .collect::<Vec<_>>()
@@ -256,19 +271,14 @@ impl AgentSystem {
                 ));
             }
 
-            // Format full Ollama message exchange
             let mut exchange_log = String::new();
-            for round in &self.last_ollama_rounds {
-                exchange_log.push_str(&format!(
-                    "--- Round {} ---\n",
-                    round.round
-                ));
+            let mut jsonl_entries: Vec<serde_json::Value> = Vec::new();
 
-                // Request messages
+            for round in &self.last_ollama_rounds {
+                exchange_log.push_str(&format!("--- Round {} ---\n", round.round));
                 exchange_log.push_str("→ Request messages sent to Ollama:\n");
                 for msg in &round.request_messages {
-                    let role = &msg.role;
-                    match role.as_str() {
+                    match msg.role.as_str() {
                         "user" => {
                             let preview: String = msg.content.chars().take(300).collect();
                             let suffix = if msg.content.len() > 300 { "…" } else { "" };
@@ -298,12 +308,31 @@ impl AgentSystem {
                             exchange_log.push_str(&format!("  [tool] {}{}\n", preview, suffix));
                         }
                         _ => {
-                            exchange_log.push_str(&format!("  [{}] {}\n", role, msg.content));
+                            exchange_log.push_str(&format!("  [{}] {}\n", msg.role, msg.content));
                         }
                     }
                 }
 
-                // Response from Ollama
+                // JSONL: request entry
+                let messages_json: Vec<serde_json::Value> = round.request_messages.iter().map(|m| {
+                    if let Some(calls) = &m.tool_calls {
+                        json!({
+                            "role": m.role,
+                            "content": m.content,
+                            "tool_calls": calls
+                        })
+                    } else {
+                        json!({ "role": m.role, "content": m.content })
+                    }
+                }).collect();
+                jsonl_entries.push(json!({
+                    "event": "ollama_request",
+                    "round": round.round,
+                    "model": model,
+                    "messages": messages_json
+                }));
+
+                // Ollama response in human-readable log
                 exchange_log.push_str("← Ollama response:\n");
                 if let Some(calls) = &round.response.tool_calls {
                     let calls_json = serde_json::to_string_pretty(calls)
@@ -316,6 +345,14 @@ impl AgentSystem {
                             .collect::<Vec<_>>()
                             .join("\n")
                     ));
+                    // JSONL: tool_calls response
+                    jsonl_entries.push(json!({
+                        "event": "ollama_response",
+                        "round": round.round,
+                        "model": model,
+                        "role": round.response.role,
+                        "tool_calls": calls
+                    }));
                 } else {
                     let preview: String = round.response.content.chars().take(300).collect();
                     let suffix = if round.response.content.len() > 300 { "…" } else { "" };
@@ -323,13 +360,35 @@ impl AgentSystem {
                         "  role: {}\n  content: {}{}\n",
                         round.response.role, preview, suffix
                     ));
+                    // JSONL: final answer response
+                    jsonl_entries.push(json!({
+                        "event": "ollama_response",
+                        "round": round.round,
+                        "model": model,
+                        "role": round.response.role,
+                        "content": round.response.content
+                    }));
                 }
                 exchange_log.push('\n');
             }
 
+            // JSONL: one entry per tool execution
+            for record in &self.last_tool_calls {
+                let args: serde_json::Value = serde_json::from_str(&record.args)
+                    .unwrap_or_else(|_| json!(record.args));
+                jsonl_entries.push(json!({
+                    "event": "tool_execution",
+                    "round": record.iteration,
+                    "tool": record.name,
+                    "arguments": args,
+                    "result": record.result
+                }));
+            }
+
             let _ = logger.log_interaction_with_tools(
                 model, user_input, full_prompt,
-                &tool_log, &exchange_log, agent_response,
+                &tool_log, &exchange_log, &jsonl_entries,
+                agent_response,
             );
         }
     }

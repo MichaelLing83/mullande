@@ -52,13 +52,13 @@ impl Logger {
         self.logs_dir.join(format!("{}.log", date))
     }
 
-    fn get_interaction_file_path(&self) -> PathBuf {
+    fn get_interaction_stem(&self) -> String {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S_%f");
-        self.interactions_dir.join(format!("interaction_{}.log", timestamp))
+        format!("interaction_{}", timestamp)
     }
 
-    pub fn log_interaction(&self, model: &str, user_input: &str, full_prompt: &str, agent_response: &str) -> Result<()> {
-        self.write_interaction_log(model, user_input, full_prompt, None, None, agent_response)
+    pub fn log_interaction(&self, model: &str, user_input: &str, full_prompt: &str, jsonl_entries: &[serde_json::Value], agent_response: &str) -> Result<()> {
+        self.write_interaction_log(model, user_input, full_prompt, None, None, Some(jsonl_entries), agent_response)
     }
 
     pub fn log_interaction_with_tools(
@@ -68,9 +68,15 @@ impl Logger {
         full_prompt: &str,
         tool_calls_log: &str,
         ollama_exchange_log: &str,
+        jsonl_entries: &[serde_json::Value],
         agent_response: &str,
     ) -> Result<()> {
-        self.write_interaction_log(model, user_input, full_prompt, Some(tool_calls_log), Some(ollama_exchange_log), agent_response)
+        self.write_interaction_log(
+            model, user_input, full_prompt,
+            Some(tool_calls_log), Some(ollama_exchange_log),
+            Some(jsonl_entries),
+            agent_response,
+        )
     }
 
     fn write_interaction_log(
@@ -80,9 +86,11 @@ impl Logger {
         full_prompt: &str,
         tool_calls_log: Option<&str>,
         ollama_exchange_log: Option<&str>,
+        jsonl_entries: Option<&[serde_json::Value]>,
         agent_response: &str,
     ) -> Result<()> {
         self.initialize()?;
+        let stem = self.get_interaction_stem();
         let timestamp = Utc::now().to_rfc3339();
 
         let tools_section = match tool_calls_log {
@@ -144,6 +152,7 @@ AGENT RESPONSE:\n\
             )
         };
 
+        // Write human-readable .log
         let daily_log_path = self.get_daily_log_path();
         if daily_log_path.exists() {
             fs::write(&daily_log_path, fs::read_to_string(&daily_log_path)? + &content + "\n")?;
@@ -151,15 +160,25 @@ AGENT RESPONSE:\n\
             let header = format!("# Mullande Interaction Logs - {}\n\n", Utc::now().format("%Y-%m-%d"));
             fs::write(&daily_log_path, header + &content + "\n")?;
         }
+        let log_path = self.interactions_dir.join(format!("{}.log", stem));
+        fs::write(&log_path, &content)?;
 
-        let interaction_path = self.get_interaction_file_path();
-        fs::write(&interaction_path, content)?;
+        // Write machine-readable .jsonl (one JSON object per line)
+        if let Some(entries) = jsonl_entries {
+            if !entries.is_empty() {
+                let jsonl_path = self.interactions_dir.join(format!("{}.jsonl", stem));
+                let lines: Vec<String> = entries.iter()
+                    .filter_map(|e| serde_json::to_string(e).ok())
+                    .collect();
+                fs::write(&jsonl_path, lines.join("\n") + "\n")?;
+            }
+        }
 
         Ok(())
     }
 
     pub fn log_ollama_call(&self, model: &str, full_prompt: &str, response: &str) -> Result<()> {
-        self.log_interaction(model, full_prompt, full_prompt, response)
+        self.log_interaction(model, full_prompt, full_prompt, &[], response)
     }
 
     pub fn log_raw(&self, level: &str, message: &str) -> Result<()> {
