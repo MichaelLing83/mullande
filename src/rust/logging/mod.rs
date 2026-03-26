@@ -58,7 +58,7 @@ impl Logger {
     }
 
     pub fn log_interaction(&self, model: &str, user_input: &str, full_prompt: &str, agent_response: &str) -> Result<()> {
-        self.write_interaction_log(model, user_input, full_prompt, None, agent_response)
+        self.write_interaction_log(model, user_input, full_prompt, None, None, agent_response)
     }
 
     pub fn log_interaction_with_tools(
@@ -67,9 +67,10 @@ impl Logger {
         user_input: &str,
         full_prompt: &str,
         tool_calls_log: &str,
+        ollama_exchange_log: &str,
         agent_response: &str,
     ) -> Result<()> {
-        self.write_interaction_log(model, user_input, full_prompt, Some(tool_calls_log), agent_response)
+        self.write_interaction_log(model, user_input, full_prompt, Some(tool_calls_log), Some(ollama_exchange_log), agent_response)
     }
 
     fn write_interaction_log(
@@ -78,6 +79,7 @@ impl Logger {
         user_input: &str,
         full_prompt: &str,
         tool_calls_log: Option<&str>,
+        ollama_exchange_log: Option<&str>,
         agent_response: &str,
     ) -> Result<()> {
         self.initialize()?;
@@ -93,6 +95,16 @@ TOOL CALLS:\n\
             _ => String::new(),
         };
 
+        let exchange_section = match ollama_exchange_log {
+            Some(log) if !log.is_empty() => format!(
+                "================================================================================\n\
+OLLAMA API EXCHANGE (full message rounds):\n\
+{}\n",
+                log
+            ),
+            _ => String::new(),
+        };
+
         let content = if user_input == full_prompt {
             format!(
                 "================================================================================\n\
@@ -101,12 +113,14 @@ Model: {}\n\
 ================================================================================\n\
 USER INPUT / FULL PROMPT:\n\
 {}\n\
-{}================================================================================\n\
+{}{}================================================================================\n\
 AGENT RESPONSE:\n\
 {}\n\
 ================================================================================\n\
 ",
-                timestamp, model, user_input.trim(), tools_section, agent_response.trim()
+                timestamp, model, user_input.trim(),
+                tools_section, exchange_section,
+                agent_response.trim()
             )
         } else {
             format!(
@@ -119,12 +133,14 @@ USER INPUT:\n\
 ================================================================================\n\
 FULL PROMPT (sent to model):\n\
 {}\n\
-{}================================================================================\n\
+{}{}================================================================================\n\
 AGENT RESPONSE:\n\
 {}\n\
 ================================================================================\n\
 ",
-                timestamp, model, user_input.trim(), full_prompt.trim(), tools_section, agent_response.trim()
+                timestamp, model, user_input.trim(), full_prompt.trim(),
+                tools_section, exchange_section,
+                agent_response.trim()
             )
         };
 

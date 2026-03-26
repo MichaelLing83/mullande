@@ -30,6 +30,14 @@ struct ToolCallRecord {
     result: String,
 }
 
+/// One round-trip between mullande and Ollama during the agentic loop.
+#[derive(Debug)]
+struct OllamaRound {
+    round: usize,
+    request_messages: Vec<ChatMessage>,
+    response: ChatMessage,
+}
+
 pub struct AgentSystem {
     pub config: Config,
     pub requested_model: Option<String>,
@@ -39,6 +47,7 @@ pub struct AgentSystem {
     params_override: ModelParams,
     tools_enabled: bool,
     last_tool_calls: Vec<ToolCallRecord>,
+    last_ollama_rounds: Vec<OllamaRound>,
 }
 
 impl AgentSystem {
@@ -56,6 +65,7 @@ impl AgentSystem {
             params_override: ModelParams::default(),
             tools_enabled: false,
             last_tool_calls: Vec::new(),
+            last_ollama_rounds: Vec::new(),
         }
     }
 
@@ -231,6 +241,7 @@ impl AgentSystem {
         if self.last_tool_calls.is_empty() {
             let _ = logger.log_interaction(model, user_input, full_prompt, agent_response);
         } else {
+            // Format tool calls summary
             let mut tool_log = String::new();
             for record in &self.last_tool_calls {
                 tool_log.push_str(&format!(
@@ -244,7 +255,82 @@ impl AgentSystem {
                         .join("\n"),
                 ));
             }
-            let _ = logger.log_interaction_with_tools(model, user_input, full_prompt, &tool_log, agent_response);
+
+            // Format full Ollama message exchange
+            let mut exchange_log = String::new();
+            for round in &self.last_ollama_rounds {
+                exchange_log.push_str(&format!(
+                    "--- Round {} ---\n",
+                    round.round
+                ));
+
+                // Request messages
+                exchange_log.push_str("→ Request messages sent to Ollama:\n");
+                for msg in &round.request_messages {
+                    let role = &msg.role;
+                    match role.as_str() {
+                        "user" => {
+                            let preview: String = msg.content.chars().take(300).collect();
+                            let suffix = if msg.content.len() > 300 { "…" } else { "" };
+                            exchange_log.push_str(&format!("  [user] {}{}\n", preview, suffix));
+                        }
+                        "assistant" => {
+                            if let Some(calls) = &msg.tool_calls {
+                                let calls_str: Vec<String> = calls.iter()
+                                    .map(|tc| {
+                                        let args = serde_json::to_string(&tc.function.arguments)
+                                            .unwrap_or_else(|_| "{}".to_string());
+                                        format!("{}({})", tc.function.name, args)
+                                    })
+                                    .collect();
+                                exchange_log.push_str(&format!(
+                                    "  [assistant] TOOL_CALLS: {}\n",
+                                    calls_str.join(", ")
+                                ));
+                            } else {
+                                let preview: String = msg.content.chars().take(200).collect();
+                                exchange_log.push_str(&format!("  [assistant] {}\n", preview));
+                            }
+                        }
+                        "tool" => {
+                            let preview: String = msg.content.chars().take(300).collect();
+                            let suffix = if msg.content.len() > 300 { "…" } else { "" };
+                            exchange_log.push_str(&format!("  [tool] {}{}\n", preview, suffix));
+                        }
+                        _ => {
+                            exchange_log.push_str(&format!("  [{}] {}\n", role, msg.content));
+                        }
+                    }
+                }
+
+                // Response from Ollama
+                exchange_log.push_str("← Ollama response:\n");
+                if let Some(calls) = &round.response.tool_calls {
+                    let calls_json = serde_json::to_string_pretty(calls)
+                        .unwrap_or_else(|_| "{}".to_string());
+                    exchange_log.push_str(&format!(
+                        "  role: {}\n  tool_calls:\n{}\n",
+                        round.response.role,
+                        calls_json.lines()
+                            .map(|l| format!("    {}", l))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                } else {
+                    let preview: String = round.response.content.chars().take(300).collect();
+                    let suffix = if round.response.content.len() > 300 { "…" } else { "" };
+                    exchange_log.push_str(&format!(
+                        "  role: {}\n  content: {}{}\n",
+                        round.response.role, preview, suffix
+                    ));
+                }
+                exchange_log.push('\n');
+            }
+
+            let _ = logger.log_interaction_with_tools(
+                model, user_input, full_prompt,
+                &tool_log, &exchange_log, agent_response,
+            );
         }
     }
 
@@ -276,9 +362,17 @@ impl AgentSystem {
         let max_iterations = 15;
         let mut final_answer = String::new();
         self.last_tool_calls.clear();
+        self.last_ollama_rounds.clear();
 
         for iteration in 0..max_iterations {
             let response = client.send_messages(model, messages.clone(), context_window, &params, tool_defs.clone())?;
+
+            // Record this round before deciding what to do
+            self.last_ollama_rounds.push(OllamaRound {
+                round: iteration + 1,
+                request_messages: messages.clone(),
+                response: response.clone(),
+            });
 
             if let Some(calls) = response.tool_calls.as_ref().filter(|c| !c.is_empty()) {
                 messages.push(response.clone());
