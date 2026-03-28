@@ -112,9 +112,9 @@ pub fn main() -> Result<()> {
              println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
              Ok(())
          }
-          Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input }) => {
-              run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input)
-           }
+           Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input }) => {
+               run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input, &workspace)
+            }
           Some(Commands::Stats) => {
               stats_command()
           }
@@ -132,7 +132,14 @@ fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u6
                temperature: Option<f32>, top_k: Option<u32>, top_p: Option<f32>, presence_penalty: Option<f32>,
                think: bool, no_think: bool,
                tools: bool, no_tools: bool,
-               input: Option<String>) -> Result<()> {
+               input: Option<String>, workspace: &WorkspaceManager) -> Result<()> {
+    if let Some(ref model_name) = model {
+        let mut config = get_config(&workspace.mullande_dir)?;
+        config.data.model.model_id = Some(model_name.clone());
+        config.save(None)?;
+        println!("{} Model '{}' saved as default", "✓".green(), model_name);
+    }
+
     let mut agent = AgentSystem::new(model);
     if let Some(timeout) = timeout {
         agent.set_timeout(std::time::Duration::from_secs(timeout));
