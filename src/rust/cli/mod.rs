@@ -181,51 +181,60 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
             return Err(anyhow!("No valid models specified"));
         }
 
-        println!("{} Running {} models in parallel...", "►".blue(), model_list.len());
+        use chrono::Local;
+        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+        
+        let original_branch = workspace.git_current_branch().unwrap_or_else(|_| "main".to_string());
 
-        use std::sync::Arc;
-        use std::thread;
-
-        let content = Arc::new(content);
         let thinking = if think { Some(true) } else if no_think { Some(false) } else { None };
         let cli_params = ModelParams { temperature, top_k, top_p, presence_penalty, thinking };
         let tools_active = tools || (!no_tools && get_config(&workspace.mullande_dir)?.get_model_config(None).tools_enabled.unwrap_or(false));
 
-        let mut handles = vec![];
-        for model_name in &model_list {
-            let content = Arc::clone(&content);
-            let model_str = model_name.to_string();
-            let timeout_val = timeout;
-            let params = cli_params.clone();
-            let tools_en = tools_active;
-            
-            handles.push(thread::spawn(move || {
-                let mut agent = AgentSystem::new(Some(model_str.clone()));
-                if let Some(t) = timeout_val {
-                    agent.set_timeout(std::time::Duration::from_secs(t));
-                }
-                if params.temperature.is_some() || params.top_k.is_some()
-                    || params.top_p.is_some() || params.presence_penalty.is_some()
-                    || params.thinking.is_some() {
-                    agent.set_model_params(params);
-                }
-                agent.set_tools_enabled(tools_en);
-                agent.process(&content)
-            }));
-        }
+        let mut results: Vec<(String, String, f64, String)> = Vec::new();
+        let mut branch_names: Vec<String> = Vec::new();
 
-        let mut results: Vec<(String, String, f64)> = Vec::new();
-        for (i, handle) in handles.into_iter().enumerate() {
-            match handle.join() {
-                Ok(Ok(result)) => {
-                    results.push((model_list[i].to_string(), result.content, result.duration_seconds));
-                }
-                Ok(Err(e)) => {
-                    println!("{} Model {} failed: {}", "✗".red(), model_list[i], e);
+        println!("{} Running {} models with git branch isolation...", "►".blue(), model_list.len());
+
+        for model_name in &model_list {
+            let safe_name = model_name.replace('/', "-").replace(':', "-");
+            let branch_name = format!("model-{}-{}", safe_name, timestamp);
+            branch_names.push(branch_name.clone());
+
+            println!("\n{} Processing with model: {} (branch: {})", "→".blue(), model_name, branch_name);
+
+            if let Err(e) = workspace.git_create_branch(&branch_name) {
+                println!("{} Failed to create branch for {}: {}", "✗".red(), model_name, e);
+                continue;
+            }
+
+            if let Err(e) = workspace.git_checkout(&branch_name) {
+                println!("{} Failed to checkout branch {}: {}", "✗".red(), branch_name, e);
+                continue;
+            }
+
+            let mut agent = AgentSystem::new(Some(model_name.to_string()));
+            if let Some(t) = timeout {
+                agent.set_timeout(std::time::Duration::from_secs(t));
+            }
+            if cli_params.temperature.is_some() || cli_params.top_k.is_some()
+                || cli_params.top_p.is_some() || cli_params.presence_penalty.is_some()
+                || cli_params.thinking.is_some() {
+                agent.set_model_params(cli_params.clone());
+            }
+            agent.set_tools_enabled(tools_active);
+
+            match agent.process(&content) {
+                Ok(result) => {
+                    println!("  {} Completed in {:.2}s", "✓".green(), result.duration_seconds);
+                    results.push((model_name.to_string(), result.content, result.duration_seconds, branch_name));
                 }
                 Err(e) => {
-                    println!("{} Model {} panicked: {:?}", "✗".red(), model_list[i], e);
+                    println!("{} Model {} failed: {}", "✗".red(), model_name, e);
                 }
+            }
+
+            if let Err(e) = workspace.git_checkout(&original_branch) {
+                println!("{} Warning: Failed to checkout back to {}: {}", "⚠".yellow(), original_branch, e);
             }
         }
 
@@ -235,55 +244,90 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
 
         if results.len() == 1 {
             println!("\n{} Only one model succeeded, skipping evaluation", "→".yellow());
-            let (m, content, duration) = &results[0];
-            println!("\n{} Model: {}", "►".blue(), m);
+            let (m, content, duration, branch) = &results[0];
+            println!("\n{} Model: {} (branch: {})", "►".blue(), m, branch);
             println!("{} Time: {:.2}s", "►".blue(), duration);
             println!("\n{}", content);
             println!();
             return Ok(());
         }
 
-        println!("\n{} Evaluating {} outputs with judge model...", "►".blue(), results.len());
-        
         let config = get_config(&workspace.mullande_dir)?;
         let default_judge = config.get_judge_model();
         let effective_judge = judge_model.or(default_judge).unwrap_or_else(|| model_list[0].to_string());
+
+        println!("\n{} Evaluating {} outputs with judge model: {}", "►".blue(), results.len(), effective_judge);
         
         let mut judge_agent = AgentSystem::new(Some(effective_judge.clone()));
         if let Some(t) = timeout {
             judge_agent.set_timeout(std::time::Duration::from_secs(t * 2));
         }
 
-        let mut best_output: Option<(String, String, String)> = None;
+        let mut best_output: Option<(String, String, String, String)> = None;
         let mut best_score: i32 = -1;
 
-        for (model_name, output, duration) in &results {
+        let mut all_outputs = Vec::new();
+        for (model_name, output, duration, branch) in &results {
+            all_outputs.push(format!("Model: {} (branch: {})\nOutput:\n{}", model_name, branch, output));
+        }
+
+        for (idx, (model_name, output, duration, branch)) in results.iter().enumerate() {
+            let other_outputs: Vec<String> = all_outputs.iter()
+                .enumerate()
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, o)| o.clone())
+                .collect();
+            
             let eval_prompt = format!(
-                "You are an expert evaluator. Compare the following outputs for the same user request and determine which is better.\n\nUser Request: {}\n\nOutput A (from {}): {}\n\nOutput B (from {}): {}\n\nRespond with ONLY a single letter 'A' if Output A is better, or 'B' if Output B is better. Consider accuracy, clarity, helpfulness, and completeness.",
-                content, model_name, output, "previous", "previous"
+                "You are an expert evaluator. Compare the following outputs for the same user request and determine which is better.\n\nUser Request:\n{}\n\n{}\n\nRespond with ONLY the number (1-{}) of the BEST output. Consider accuracy, clarity, helpfulness, and completeness.",
+                content,
+                all_outputs.iter().enumerate().map(|(i, o)| format!("{}. {}", i + 1, o)).collect::<Vec<_>>().join("\n\n"),
+                all_outputs.len()
             );
 
-            let eval_result = judge_agent.process(&eval_prompt)?;
-            let response = eval_result.content.trim().to_uppercase();
-            
-            let score = if response.starts_with('A') { 1 } else { 0 };
-            
-            if score > best_score {
-                best_score = score;
-                best_output = Some((model_name.clone(), output.clone(), format!("{:.2}s", duration)));
+            match judge_agent.process(&eval_prompt) {
+                Ok(eval_result) => {
+                    let response = eval_result.content.trim().to_string();
+                    let best_num = response.chars().find(|c| c.is_ascii_digit()).and_then(|c| c.to_digit(10)).unwrap_or(1) as usize;
+                    
+                    let score = if best_num == idx + 1 { 1 } else { 0 };
+                    
+                    if score > best_score {
+                        best_score = score;
+                        best_output = Some((model_name.clone(), output.clone(), format!("{:.2}s", duration), branch.clone()));
+                    }
+                    println!("  {}: chose #{}", model_name, best_num);
+                }
+                Err(e) => {
+                    println!("{} Evaluation failed for {}: {}", "✗".red(), model_name, e);
+                }
             }
         }
 
-        if let Some((best_model, best_content, best_duration)) = best_output {
-            println!("\n{} Best output from: {}", "★".green(), best_model);
+        if let Some((best_model, best_content, best_duration, best_branch)) = best_output {
+            println!("\n{} Merging best branch '{}' into main...", "►".blue(), best_branch);
+            if let Err(e) = workspace.git_merge(&best_branch) {
+                println!("{} Merge warning: {}", "⚠".yellow(), e);
+            } else {
+                println!("{} Successfully merged branch '{}'", "✓".green(), best_branch);
+            }
+
+            println!("\n{} Best output from: {} (branch: {})", "★".green(), best_model, best_branch);
             println!("{} Time: {}", "►".blue(), best_duration);
             println!("\n{}", best_content);
         } else {
-            let (first_model, first_content, first_duration) = &results[0];
+            let (first_model, first_content, first_duration, first_branch) = &results[0];
             println!("\n{} Using first output (evaluation inconclusive)", "→".yellow());
-            println!("\n{} Model: {}", "►".blue(), first_model);
+            println!("\n{} Model: {} (branch: {})", "►".blue(), first_model, first_branch);
             println!("{} Time: {:.2}s", "►".blue(), first_duration);
             println!("\n{}", first_content);
+            
+            println!("\n{} Merging branch '{}' into main...", "►".blue(), first_branch);
+            if let Err(e) = workspace.git_merge(first_branch) {
+                println!("{} Merge warning: {}", "⚠".yellow(), e);
+            } else {
+                println!("{} Successfully merged", "✓".green());
+            }
         }
         println!();
         return Ok(());

@@ -146,4 +146,48 @@ Thumbs.db
         }
         Ok(())
     }
+
+    pub fn git_create_branch(&self, branch_name: &str) -> Result<()> {
+        let output = Command::new("git")
+            .args(&["checkout", "-b", branch_name])
+            .current_dir(&self.memory_dir)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!("Failed to create branch: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(())
+    }
+
+    pub fn git_checkout(&self, branch_name: &str) -> Result<()> {
+        let output = Command::new("git")
+            .args(&["checkout", branch_name])
+            .current_dir(&self.memory_dir)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!("Failed to checkout: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(())
+    }
+
+    pub fn git_merge(&self, branch_name: &str) -> Result<()> {
+        let output = Command::new("git")
+            .args(&["merge", "--no-edit", branch_name])
+            .current_dir(&self.memory_dir)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!("Merge failed: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(())
+    }
+
+    pub fn git_current_branch(&self) -> Result<String> {
+        let output = Command::new("git")
+            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&self.memory_dir)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!("Failed to get current branch: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
 }
