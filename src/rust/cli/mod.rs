@@ -259,6 +259,7 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
         println!("\n{} Evaluating {} outputs with judge model: {}", "►".blue(), results.len(), effective_judge);
         
         let mut judge_agent = AgentSystem::new(Some(effective_judge.clone()));
+        judge_agent.set_skip_conversation(true);
         if let Some(t) = timeout {
             judge_agent.set_timeout(std::time::Duration::from_secs(t * 2));
         }
@@ -304,6 +305,15 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
             }
         }
 
+        let eval_log_path = save_evaluation_log(
+            &workspace.mullande_dir,
+            &timestamp,
+            &effective_judge,
+            &model_list,
+            &results,
+            &best_output,
+        )?;
+
         if let Some((best_model, best_content, best_duration, best_branch)) = best_output {
             println!("\n{} Merging best branch '{}' into main...", "►".blue(), best_branch);
             if let Err(e) = workspace.git_merge(&best_branch) {
@@ -329,6 +339,8 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
                 println!("{} Successfully merged", "✓".green());
             }
         }
+
+        println!("\n{} Evaluation log saved to: {}", "►".blue(), eval_log_path);
         println!();
         return Ok(());
     }
@@ -742,4 +754,48 @@ fn create_config_interactive(mut config: Config, workspace: &WorkspaceManager) -
     println!("{}", config.to_json()?);
 
     Ok(())
+}
+
+fn save_evaluation_log(
+    mullande_dir: &Path,
+    timestamp: &str,
+    judge_model: &str,
+    model_list: &[&str],
+    results: &[(String, String, f64, String)],
+    best_output: &Option<(String, String, String, String)>,
+) -> Result<String> {
+    let eval_dir = mullande_dir.join("evaluations");
+    fs::create_dir_all(&eval_dir)?;
+    
+    let filename = format!("evaluation_{}.md", timestamp);
+    let eval_path = eval_dir.join(&filename);
+    
+    let mut content = String::new();
+    content.push_str(&format!("# Multi-Model Evaluation\n\n"));
+    content.push_str(&format!("- **Timestamp**: {}\n", timestamp));
+    content.push_str(&format!("- **Judge Model**: {}\n", judge_model));
+    content.push_str(&format!("- **Models Evaluated**: {}\n\n", model_list.join(", ")));
+    
+    content.push_str("## All Outputs\n\n");
+    for (i, (model_name, output, duration, branch)) in results.iter().enumerate() {
+        content.push_str(&format!("### {}. {} (branch: {})\n", i + 1, model_name, branch));
+        content.push_str(&format!("- **Duration**: {:.2}s\n\n", duration));
+        content.push_str("```\n");
+        content.push_str(output);
+        content.push_str("\n```\n\n");
+    }
+    
+    content.push_str("## Evaluation Result\n\n");
+    if let Some((best_model, best_output_text, best_duration, best_branch)) = best_output {
+        content.push_str(&format!("**Winner**: {} (branch: {})\n", best_model, best_branch));
+        content.push_str(&format!("**Duration**: {:.2}s\n\n", best_duration));
+        content.push_str("**Output**:\n```\n");
+        content.push_str(best_output_text);
+        content.push_str("\n```\n");
+    } else {
+        content.push_str("*Evaluation inconclusive, first output used*\n");
+    }
+    
+    fs::write(&eval_path, content)?;
+    Ok(eval_path.to_string_lossy().to_string())
 }

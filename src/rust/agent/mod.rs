@@ -48,6 +48,7 @@ pub struct AgentSystem {
     verbose: bool,
     params_override: ModelParams,
     tools_enabled: bool,
+    skip_conversation: bool,
     last_tool_calls: Vec<ToolCallRecord>,
     last_ollama_rounds: Vec<OllamaRound>,
 }
@@ -66,6 +67,7 @@ impl AgentSystem {
             verbose: false,
             params_override: ModelParams::default(),
             tools_enabled: false,
+            skip_conversation: false,
             last_tool_calls: Vec::new(),
             last_ollama_rounds: Vec::new(),
         }
@@ -85,6 +87,10 @@ impl AgentSystem {
 
     pub fn set_tools_enabled(&mut self, enabled: bool) {
         self.tools_enabled = enabled;
+    }
+
+    pub fn set_skip_conversation(&mut self, skip: bool) {
+        self.skip_conversation = skip;
     }
 
     pub fn effective_model_id(&self) -> String {
@@ -239,8 +245,10 @@ impl AgentSystem {
 
         if self.last_tool_calls.is_empty() {
             // Non-tool streaming run
-            let mut memory = Memory::new(None);
-            let _ = memory.append_to_conversation(user_input, agent_response, model);
+            if !self.skip_conversation {
+                let mut memory = Memory::new(None);
+                let _ = memory.append_to_conversation(user_input, agent_response, model);
+            }
 
             let jsonl_entries = vec![
                 json!({
@@ -260,14 +268,16 @@ impl AgentSystem {
             let _ = logger.log_interaction(model, user_input, full_prompt, &jsonl_entries, agent_response);
         } else {
             // Tool-enabled run
-            let mut memory = Memory::new(None);
-            // Build (tool_name, args_json, result) tuples for memory storage
-            let tool_call_tuples: Vec<(String, String, String)> = self.last_tool_calls.iter()
-                .map(|r| (r.name.clone(), r.args.clone(), r.result.clone()))
-                .collect();
-            let _ = memory.append_to_conversation_with_tools(
-                user_input, agent_response, model, &tool_call_tuples,
-            );
+            if !self.skip_conversation {
+                let mut memory = Memory::new(None);
+                // Build (tool_name, args_json, result) tuples for memory storage
+                let tool_call_tuples: Vec<(String, String, String)> = self.last_tool_calls.iter()
+                    .map(|r| (r.name.clone(), r.args.clone(), r.result.clone()))
+                    .collect();
+                let _ = memory.append_to_conversation_with_tools(
+                    user_input, agent_response, model, &tool_call_tuples,
+                );
+            }
 
             let mut tool_log = String::new();
             for record in &self.last_tool_calls {
