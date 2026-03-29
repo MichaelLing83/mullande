@@ -65,6 +65,8 @@ pub struct ConfigSchema {
     pub models: Option<std::collections::HashMap<String, ModelConfig>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub global_context_window: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub judge_model: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +182,10 @@ impl Config {
             None => None,
         }
     }
+
+    pub fn get_judge_model(&self) -> Option<String> {
+        self.data.judge_model.clone()
+    }
 }
 
 pub fn get_config(mullande_dir: &Path) -> Result<Config> {
@@ -190,6 +196,7 @@ pub fn get_config(mullande_dir: &Path) -> Result<Config> {
             model: ModelConfig::default(),
             models: None,
             global_context_window: Some(4096),
+            judge_model: None,
         };
         let config = Config {
             data: default_config,

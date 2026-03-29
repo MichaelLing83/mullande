@@ -30,6 +30,12 @@ pub enum Commands {
         #[arg(short, long)]
         model: Option<String>,
 
+        #[arg(long, help = "Multiple models to compare (comma-separated). Will evaluate and return the best output")]
+        models: Option<String>,
+
+        #[arg(long, help = "Judge model to evaluate outputs. If not specified, uses first model in --models")]
+        judge_model: Option<String>,
+
         #[arg(short, long)]
         prompt: Option<String>,
 
@@ -112,8 +118,8 @@ pub fn main() -> Result<()> {
              println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
              Ok(())
          }
-           Some(Commands::Run { model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input }) => {
-               run_command(model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input, &workspace)
+           Some(Commands::Run { model, models, judge_model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input }) => {
+               run_command(model, models, judge_model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input, &workspace)
             }
           Some(Commands::Stats) => {
               stats_command()
@@ -128,7 +134,8 @@ pub fn main() -> Result<()> {
       }
 }
 
-fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u64>, verbose: bool,
+fn run_command(model: Option<String>, models: Option<String>, judge_model: Option<String>, 
+               prompt: Option<String>, timeout: Option<u64>, verbose: bool,
                temperature: Option<f32>, top_k: Option<u32>, top_p: Option<f32>, presence_penalty: Option<f32>,
                think: bool, no_think: bool,
                tools: bool, no_tools: bool,
@@ -140,24 +147,12 @@ fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u6
         println!("{} Model '{}' saved as default", "✓".green(), model_name);
     }
 
-    let mut agent = AgentSystem::new(model);
-    if let Some(timeout) = timeout {
-        agent.set_timeout(std::time::Duration::from_secs(timeout));
+    if let Some(ref judge_model_name) = judge_model {
+        let mut config = get_config(&workspace.mullande_dir)?;
+        config.data.judge_model = Some(judge_model_name.clone());
+        config.save(None)?;
+        println!("{} Judge model '{}' saved as default", "✓".green(), judge_model_name);
     }
-    agent.set_verbose(verbose);
-
-    let thinking = if think { Some(true) } else if no_think { Some(false) } else { None };
-    let cli_params = ModelParams { temperature, top_k, top_p, presence_penalty, thinking };
-    if cli_params.temperature.is_some() || cli_params.top_k.is_some()
-        || cli_params.top_p.is_some() || cli_params.presence_penalty.is_some()
-        || cli_params.thinking.is_some() {
-        agent.set_model_params(cli_params);
-    }
-
-    // Tool calling: CLI flag > config
-    let config_tools = agent.model_config().tools_enabled.unwrap_or(false);
-    let tools_active = if tools { true } else if no_tools { false } else { config_tools };
-    agent.set_tools_enabled(tools_active);
 
     let content = match (input, prompt) {
         (Some(input), _) => {
@@ -179,6 +174,138 @@ fn run_command(model: Option<String>, prompt: Option<String>, timeout: Option<u6
             content
         }
     };
+
+    if let Some(models_str) = models {
+        let model_list: Vec<&str> = models_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        if model_list.is_empty() {
+            return Err(anyhow!("No valid models specified"));
+        }
+
+        println!("{} Running {} models in parallel...", "►".blue(), model_list.len());
+
+        use std::sync::Arc;
+        use std::thread;
+
+        let content = Arc::new(content);
+        let thinking = if think { Some(true) } else if no_think { Some(false) } else { None };
+        let cli_params = ModelParams { temperature, top_k, top_p, presence_penalty, thinking };
+        let tools_active = tools || (!no_tools && get_config(&workspace.mullande_dir)?.get_model_config(None).tools_enabled.unwrap_or(false));
+
+        let mut handles = vec![];
+        for model_name in &model_list {
+            let content = Arc::clone(&content);
+            let model_str = model_name.to_string();
+            let timeout_val = timeout;
+            let params = cli_params.clone();
+            let tools_en = tools_active;
+            
+            handles.push(thread::spawn(move || {
+                let mut agent = AgentSystem::new(Some(model_str.clone()));
+                if let Some(t) = timeout_val {
+                    agent.set_timeout(std::time::Duration::from_secs(t));
+                }
+                if params.temperature.is_some() || params.top_k.is_some()
+                    || params.top_p.is_some() || params.presence_penalty.is_some()
+                    || params.thinking.is_some() {
+                    agent.set_model_params(params);
+                }
+                agent.set_tools_enabled(tools_en);
+                agent.process(&content)
+            }));
+        }
+
+        let mut results: Vec<(String, String, f64)> = Vec::new();
+        for (i, handle) in handles.into_iter().enumerate() {
+            match handle.join() {
+                Ok(Ok(result)) => {
+                    results.push((model_list[i].to_string(), result.content, result.duration_seconds));
+                }
+                Ok(Err(e)) => {
+                    println!("{} Model {} failed: {}", "✗".red(), model_list[i], e);
+                }
+                Err(e) => {
+                    println!("{} Model {} panicked: {:?}", "✗".red(), model_list[i], e);
+                }
+            }
+        }
+
+        if results.is_empty() {
+            return Err(anyhow!("All models failed"));
+        }
+
+        if results.len() == 1 {
+            println!("\n{} Only one model succeeded, skipping evaluation", "→".yellow());
+            let (m, content, duration) = &results[0];
+            println!("\n{} Model: {}", "►".blue(), m);
+            println!("{} Time: {:.2}s", "►".blue(), duration);
+            println!("\n{}", content);
+            println!();
+            return Ok(());
+        }
+
+        println!("\n{} Evaluating {} outputs with judge model...", "►".blue(), results.len());
+        
+        let config = get_config(&workspace.mullande_dir)?;
+        let default_judge = config.get_judge_model();
+        let effective_judge = judge_model.or(default_judge).unwrap_or_else(|| model_list[0].to_string());
+        
+        let mut judge_agent = AgentSystem::new(Some(effective_judge.clone()));
+        if let Some(t) = timeout {
+            judge_agent.set_timeout(std::time::Duration::from_secs(t * 2));
+        }
+
+        let mut best_output: Option<(String, String, String)> = None;
+        let mut best_score: i32 = -1;
+
+        for (model_name, output, duration) in &results {
+            let eval_prompt = format!(
+                "You are an expert evaluator. Compare the following outputs for the same user request and determine which is better.\n\nUser Request: {}\n\nOutput A (from {}): {}\n\nOutput B (from {}): {}\n\nRespond with ONLY a single letter 'A' if Output A is better, or 'B' if Output B is better. Consider accuracy, clarity, helpfulness, and completeness.",
+                content, model_name, output, "previous", "previous"
+            );
+
+            let eval_result = judge_agent.process(&eval_prompt)?;
+            let response = eval_result.content.trim().to_uppercase();
+            
+            let score = if response.starts_with('A') { 1 } else { 0 };
+            
+            if score > best_score {
+                best_score = score;
+                best_output = Some((model_name.clone(), output.clone(), format!("{:.2}s", duration)));
+            }
+        }
+
+        if let Some((best_model, best_content, best_duration)) = best_output {
+            println!("\n{} Best output from: {}", "★".green(), best_model);
+            println!("{} Time: {}", "►".blue(), best_duration);
+            println!("\n{}", best_content);
+        } else {
+            let (first_model, first_content, first_duration) = &results[0];
+            println!("\n{} Using first output (evaluation inconclusive)", "→".yellow());
+            println!("\n{} Model: {}", "►".blue(), first_model);
+            println!("{} Time: {:.2}s", "►".blue(), first_duration);
+            println!("\n{}", first_content);
+        }
+        println!();
+        return Ok(());
+    }
+
+    let mut agent = AgentSystem::new(model);
+    if let Some(timeout) = timeout {
+        agent.set_timeout(std::time::Duration::from_secs(timeout));
+    }
+    agent.set_verbose(verbose);
+
+    let thinking = if think { Some(true) } else if no_think { Some(false) } else { None };
+    let cli_params = ModelParams { temperature, top_k, top_p, presence_penalty, thinking };
+    if cli_params.temperature.is_some() || cli_params.top_k.is_some()
+        || cli_params.top_p.is_some() || cli_params.presence_penalty.is_some()
+        || cli_params.thinking.is_some() {
+        agent.set_model_params(cli_params);
+    }
+
+    let config_tools = agent.model_config().tools_enabled.unwrap_or(false);
+    let tools_active = if tools { true } else if no_tools { false } else { config_tools };
+    agent.set_tools_enabled(tools_active);
 
     let result = agent.process(&content)?;
     println!("\n{} Model: {}", "►".blue(), result.model);
