@@ -300,4 +300,55 @@ impl Memory {
 
         Ok(history)
     }
+
+    pub fn next_subagent_number(&self) -> usize {
+        let dir = self.memory_dir.join("subagents");
+        if !dir.exists() {
+            return 1;
+        }
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
+                    .count()
+            })
+            .unwrap_or(0) + 1
+    }
+
+    pub fn save_subagent_history(
+        &mut self,
+        task: &str,
+        model: &str,
+        conversation: &[(String, String)],
+        final_result: &str,
+    ) -> bool {
+        let timestamp = Utc::now().to_rfc3339();
+        let sub_num = self.next_subagent_number();
+        
+        let mut md_content = String::new();
+        md_content.push_str(&format!("# Subagent #{:03}\n\n", sub_num));
+        md_content.push_str(&format!("**Timestamp:** {}\n", timestamp));
+        md_content.push_str(&format!("**Model:** `{}`\n", model));
+        md_content.push_str(&format!("**Task:** {}\n\n", task));
+        
+        md_content.push_str("---\n\n");
+        
+        for (i, (user, agent)) in conversation.iter().enumerate() {
+            md_content.push_str(&format!("**Turn {} - User:**\n{}\n\n", i + 1, user));
+            md_content.push_str(&format!("**Turn {} - Agent:**\n{}\n\n", i + 1, agent));
+        }
+        
+        md_content.push_str("---\n\n");
+        md_content.push_str("**Final Result:**\n");
+        md_content.push_str(final_result);
+        
+        let rel_path = format!("subagents/{:03}.md", sub_num);
+        
+        self.write_one(
+            &rel_path,
+            &md_content,
+            &format!("Subagent #{}: {} chars result", sub_num, final_result.len())
+        )
+    }
 }

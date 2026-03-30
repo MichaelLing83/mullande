@@ -119,6 +119,24 @@ impl ToolRegistry {
                     "required": ["pattern"]
                 }),
             },
+            ToolDef {
+                name: "subagent",
+                description: "Delegate a complex task to a sub-agent. The sub-agent has its own conversation history and can use tools (read_file, write_file, bash, glob, grep) to accomplish the task. Use this for multi-step tasks that require planning and multiple tool calls.",
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "The task to delegate to the sub-agent. Be specific about what you want accomplished."
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Model to use for the sub-agent (optional, defaults to configured default model)"
+                        }
+                    },
+                    "required": ["task"]
+                }),
+            },
         ];
 
         Self { tools, working_dir }
@@ -144,8 +162,19 @@ impl ToolRegistry {
             "bash"       => self.bash(args),
             "glob"       => self.glob(args),
             "grep"       => self.grep(args),
+            "subagent"   => self.subagent(args),
             _            => format!("Error: unknown tool '{}'", name),
         }
+    }
+
+    fn subagent(&self, args: &Value) -> String {
+        let task = match args["task"].as_str() {
+            Some(t) => t,
+            None => return "Error: missing required parameter 'task'".to_string(),
+        };
+        let model = args["model"].as_str();
+
+        format!("[SUBAGENT] To execute a subagent, please use AgentSystem::run_subagent() directly.\nTask: {}\nModel: {:?}", task, model)
     }
 
     fn resolve(&self, path_str: &str) -> PathBuf {

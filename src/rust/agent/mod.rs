@@ -475,7 +475,20 @@ impl AgentSystem {
                         iteration + 1, tc.function.name, args_display);
 
                     let tool_start = Instant::now();
-                    let result = registry.execute(&tc.function.name, &tc.function.arguments);
+                    let result = if tc.function.name == "subagent" {
+                        let task = tc.function.arguments.get("task")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let model = tc.function.arguments.get("model")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        match self.run_subagent(task, model) {
+                            Ok(r) => r,
+                            Err(e) => format!("Subagent error: {}", e),
+                        }
+                    } else {
+                        registry.execute(&tc.function.name, &tc.function.arguments)
+                    };
                     tool_exec_time_secs += tool_start.elapsed().as_secs_f64();
 
                     let preview: String = result.chars().take(200).collect();
@@ -527,5 +540,31 @@ impl AgentSystem {
         );
 
         Ok((final_answer, duration, 0.0, 0.0, 0, answer_tokens))
+    }
+
+    pub fn run_subagent(&mut self, task: &str, model: Option<String>) -> Result<String> {
+        let sub_model = model.or_else(|| self.requested_model.clone());
+        println!("\x1b[35m[subagent] Starting subagent with model: {:?}\x1b[0m", sub_model);
+        
+        let mut sub_agent = AgentSystem::new(sub_model.clone());
+        if let Some(timeout) = self.timeout {
+            sub_agent.set_timeout(timeout);
+        }
+        sub_agent.set_tools_enabled(self.tools_enabled);
+        sub_agent.set_model_params(self.params_override.clone());
+        
+        let result = sub_agent.process(task)?;
+        
+        let mut memory = Memory::new(None);
+        let _ = memory.save_subagent_history(
+            task,
+            &result.model,
+            &[],
+            &result.content,
+        );
+        
+        println!("\x1b[35m[subagent] Completed subagent with model: {}\x1b[0m", result.model);
+        
+        Ok(result.content)
     }
 }
