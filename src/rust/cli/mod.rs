@@ -90,6 +90,24 @@ pub enum Commands {
     },
     /// Show version information
     Version,
+    /// Manage memory (clean, compact, status)
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum MemoryAction {
+    /// Commit current state (for checkpointing before clean operations)
+    Clean,
+    /// Compact conversation history using LLM
+    Compact {
+        #[arg(long, help = "Model to use for compaction (default: latest qwen3.5)")]
+        model: Option<String>,
+    },
+    /// Show memory repository status
+    Status,
 }
 
 pub fn main() -> Result<()> {
@@ -130,6 +148,9 @@ pub fn main() -> Result<()> {
           Some(Commands::Version) => {
               println!("mullande v{}", env!("CARGO_PKG_VERSION"));
               Ok(())
+          }
+          Some(Commands::Memory { action }) => {
+              memory_command(action, &workspace)
           }
       }
 }
@@ -798,4 +819,134 @@ fn save_evaluation_log(
     
     fs::write(&eval_path, content)?;
     Ok(eval_path.to_string_lossy().to_string())
+}
+
+fn memory_command(action: MemoryAction, workspace: &WorkspaceManager) -> Result<()> {
+    match action {
+        MemoryAction::Clean => {
+            println!("{} Memory clean: committing current state", "→".blue());
+            if workspace.git_has_changes() {
+                workspace.git_add(Path::new("."));
+                workspace.git_commit("Memory clean: checkpoint before compaction")?;
+                println!("{} Committed current state", "✓".green());
+            } else {
+                println!("{} No changes to commit", "→".yellow());
+            }
+            Ok(())
+        }
+        MemoryAction::Compact { model } => {
+            println!("{} Compacting conversation history...", "→".blue());
+            
+            let model_name = if let Some(m) = model {
+                m
+            } else {
+                let client = OllamaClient::new("http://localhost:11434", None);
+                match client.list_models() {
+                    Ok(models) => {
+                        models.into_iter()
+                            .filter(|m| m.to_lowercase().contains("qwen3.5"))
+                            .max()
+                            .unwrap_or_else(|| "qwen3.5".to_string())
+                    }
+                    Err(_) => "qwen3.5".to_string(),
+                }
+            };
+            println!("{} Using model: {}", "→".blue(), model_name);
+            
+            let memory = crate::memory::Memory::new(Some(workspace.clone()));
+            let history = match memory.load_conversation_history() {
+                Ok(h) => h,
+                Err(e) => return Err(anyhow!("Failed to load conversation: {}", e)),
+            };
+            
+            if history.is_empty() {
+                println!("{} No conversation history to compact", "→".yellow());
+                return Ok(());
+            }
+            
+            let conversation_text: String = history.chunks(2)
+                .filter(|chunk| chunk.len() == 2)
+                .enumerate()
+                .map(|(i, chunk)| format!("Turn {}:\nUser: {}\nAssistant: {}\n", i + 1, chunk[0], chunk[1]))
+                .collect();
+            
+            let summary_prompt = format!(
+                "Summarize the following conversation concisely, preserving key information, decisions, and important context:\n\n{}\n\nProvide a concise summary (max 500 words):",
+                conversation_text
+            );
+            
+            let mut agent = AgentSystem::new(Some(model_name));
+            let result = agent.process(&summary_prompt)?;
+            
+            let compact_content = format!(
+                "# Mullande Conversation Log\n\nThis file stores all conversations from mullande run and mullande chat.\n\n---\n\n**Compacted Summary** (model: {})\n\n{}\n",
+                result.model, result.content
+            );
+            
+            let mut memory = crate::memory::Memory::new(Some(workspace.clone()));
+            if !memory.write_one("CONVERSATIONS.md", &compact_content, "Compact conversation history") {
+                return Err(anyhow!("Failed to save compacted conversation"));
+            }
+            
+            println!("{} Compacted conversation history", "✓".green());
+            println!("\nSummary:\n{}", result.content);
+            Ok(())
+        }
+        MemoryAction::Status => {
+            println!("{} Memory Repository Status\n", "►".blue());
+            
+            let memory = workspace.get_memory_path();
+            println!("  Path: {}", memory.to_string_lossy());
+            
+            if !memory.exists() {
+                println!("  Status: Not initialized");
+                return Ok(());
+            }
+            
+            let conversations_md = memory.join("CONVERSATIONS.md");
+            if conversations_md.exists() {
+                if let Ok(content) = fs::read_to_string(&conversations_md) {
+                    let turns = content.matches("**User:**").count();
+                    println!("  Conversation turns: {}", turns);
+                }
+            }
+            
+            let tool_calls_dir = memory.join("tool_calls");
+            if tool_calls_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&tool_calls_dir) {
+                    let count = entries.filter_map(|e| e.ok()).filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false)).count();
+                    println!("  Tool calls: {}", count);
+                }
+            }
+            
+            let subagents_dir = memory.join("subagents");
+            if subagents_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&subagents_dir) {
+                    let count = entries.filter_map(|e| e.ok()).filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false)).count();
+                    println!("  Subagents: {}", count);
+                }
+            }
+            
+            let evaluations_dir = workspace.mullande_dir.join("evaluations");
+            if evaluations_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&evaluations_dir) {
+                    let count = entries.filter_map(|e| e.ok()).filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false)).count();
+                    println!("  Evaluations: {}", count);
+                }
+            }
+            
+            let output = std::process::Command::new("git")
+                .args(&["rev-list", "--count", "HEAD"])
+                .current_dir(memory)
+                .output();
+            if let Ok(o) = output {
+                if o.status.success() {
+                    let commits = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    println!("  Git commits: {}", commits);
+                }
+            }
+            
+            Ok(())
+        }
+    }
 }
