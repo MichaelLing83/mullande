@@ -104,6 +104,8 @@ pub enum Commands {
 pub enum MemoryAction {
     /// Commit current state (for checkpointing before clean operations)
     Clean,
+    /// Print conversation history to stdout
+    Print,
     /// Compact conversation history using LLM
     Compact {
         #[arg(long, help = "Model to use for compaction (default: latest qwen3.5)")]
@@ -848,6 +850,13 @@ fn memory_command(action: MemoryAction, workspace: &WorkspaceManager) -> Result<
             } else {
                 println!("{} No changes to commit", "→".yellow());
             }
+            Ok(())
+        }
+        MemoryAction::Print => {
+            let memory = crate::memory::Memory::new(Some(workspace.clone()));
+            let content = memory.read("CONVERSATIONS.md")
+                .map_err(|e| anyhow!("Failed to read CONVERSATIONS.md: {}", e))?;
+            println!("{}", content);
             Ok(())
         }
         MemoryAction::Compact { model } => {
