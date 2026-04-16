@@ -69,6 +69,9 @@ pub enum Commands {
         #[arg(long, help = "Disable tool calling; overrides config", conflicts_with = "tools")]
         no_tools: bool,
 
+        #[arg(long, help = "Don't save to memory (.mullande/.memory)")]
+        no_memory: bool,
+
         input: Option<String>,
     },
     /// Show performance statistics collected from previous runs
@@ -136,8 +139,8 @@ pub fn main() -> Result<()> {
              println!("  Fish:  echo '_MULLANDE_COMPLETE=fish_source mullande | source' >> ~/.config/fish/completions/mullande.fish");
              Ok(())
          }
-           Some(Commands::Run { model, models, judge_model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input }) => {
-               run_command(model, models, judge_model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, input, &workspace)
+           Some(Commands::Run { model, models, judge_model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, no_memory, input }) => {
+               run_command(model, models, judge_model, prompt, timeout, verbose, temperature, top_k, top_p, presence_penalty, think, no_think, tools, no_tools, no_memory, input, &workspace)
             }
           Some(Commands::Stats) => {
               stats_command()
@@ -159,7 +162,7 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
                prompt: Option<String>, timeout: Option<u64>, verbose: bool,
                temperature: Option<f32>, top_k: Option<u32>, top_p: Option<f32>, presence_penalty: Option<f32>,
                think: bool, no_think: bool,
-               tools: bool, no_tools: bool,
+               tools: bool, no_tools: bool, no_memory: bool,
                input: Option<String>, workspace: &WorkspaceManager) -> Result<()> {
     if let Some(ref model_name) = model {
         let mut config = get_config(&workspace.mullande_dir)?;
@@ -197,6 +200,10 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
     };
 
     if let Some(models_str) = models {
+        if no_memory {
+            return Err(anyhow!("--no-memory is not supported with --models (multi-model comparison requires memory for branch isolation)"));
+        }
+
         let model_list: Vec<&str> = models_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
         if model_list.is_empty() {
             return Err(anyhow!("No valid models specified"));
@@ -234,6 +241,9 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
             }
 
             let mut agent = AgentSystem::new(Some(model_name.to_string()));
+            if no_memory {
+                agent.set_skip_conversation(true);
+            }
             if let Some(t) = timeout {
                 agent.set_timeout(std::time::Duration::from_secs(t));
             }
@@ -281,6 +291,9 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
         
         let mut judge_agent = AgentSystem::new(Some(effective_judge.clone()));
         judge_agent.set_skip_conversation(true);
+        if no_memory {
+            judge_agent.set_skip_conversation(true);
+        }
         if let Some(t) = timeout {
             judge_agent.set_timeout(std::time::Duration::from_secs(t * 2));
         }
@@ -367,6 +380,9 @@ fn run_command(model: Option<String>, models: Option<String>, judge_model: Optio
     }
 
     let mut agent = AgentSystem::new(model);
+    if no_memory {
+        agent.set_skip_conversation(true);
+    }
     if let Some(timeout) = timeout {
         agent.set_timeout(std::time::Duration::from_secs(timeout));
     }
