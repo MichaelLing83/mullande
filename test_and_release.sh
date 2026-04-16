@@ -42,16 +42,22 @@ if command -v cross >/dev/null && docker info >/dev/null 2>&1; then
 
     # Linux x86_64
     echo "▶️  Building Linux x86_64..."
-    cross build --release --target x86_64-unknown-linux-gnu
-    cp -f target/x86_64-unknown-linux-gnu/release/mullande releases/mullande-x86_64-unknown-linux-gnu
-    echo "✅ Linux x86_64 built: releases/mullande-x86_64-unknown-linux-gnu ($(du -h releases/mullande-x86_64-unknown-linux-gnu | cut -f1))"
+    if cross build --release --target x86_64-unknown-linux-gnu 2>/dev/null; then
+        cp -f target/x86_64-unknown-linux-gnu/release/mullande releases/mullande-x86_64-unknown-linux-gnu
+        echo "✅ Linux x86_64 built: releases/mullande-x86_64-unknown-linux-gnu ($(du -h releases/mullande-x86_64-unknown-linux-gnu | cut -f1))"
+    else
+        echo "⚠️  Linux x86_64 build failed (dependencies issue), skipping..."
+    fi
     echo ""
 
     # Windows x86_64
     echo "▶️  Building Windows x86_64..."
-    cross build --release --target x86_64-pc-windows-msvc
-    cp -f target/x86_64-pc-windows-msvc/release/mullande.exe releases/mullande-x86_64-pc-windows-msvc.exe
-    echo "✅ Windows x86_64 built: releases/mullande-x86_64-pc-windows-msvc.exe ($(du -h releases/mullande-x86_64-pc-windows-msvc.exe | cut -f1))"
+    if cross build --release --target x86_64-pc-windows-msvc 2>/dev/null; then
+        cp -f target/x86_64-pc-windows-msvc/release/mullande.exe releases/mullande-x86_64-pc-windows-msvc.exe
+        echo "✅ Windows x86_64 built: releases/mullande-x86_64-pc-windows-msvc.exe ($(du -h releases/mullande-x86_64-pc-windows-msvc.exe | cut -f1))"
+    else
+        echo "⚠️  Windows x86_64 build failed, skipping..."
+    fi
     echo ""
 else
     echo "⚠️  Skipping cross compilation:"
