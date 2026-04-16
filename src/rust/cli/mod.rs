@@ -842,14 +842,21 @@ fn save_evaluation_log(
 fn memory_command(action: MemoryAction, workspace: &WorkspaceManager) -> Result<()> {
     match action {
         MemoryAction::Clean => {
-            println!("{} Memory clean: committing current state", "→".blue());
-            if workspace.git_has_changes() {
-                workspace.git_add(Path::new("."));
-                workspace.git_commit("Memory clean: checkpoint before compaction")?;
-                println!("{} Committed current state", "✓".green());
+            println!("{} Memory clean: committing and clearing conversation history", "→".blue());
+            
+            let mut memory = crate::memory::Memory::new(Some(workspace.clone()));
+            
+            let clean_content = "# Mullande Conversation Log\n\nThis file stores all conversations from mullande run and mullande chat.\n";
+            if memory.write_one("CONVERSATIONS.md", clean_content, "Memory clean: clear conversation history") {
+                workspace.git_add(Path::new("CONVERSATIONS.md"));
+                if workspace.git_has_changes() {
+                    workspace.git_commit("Memory clean: clear conversation history")?;
+                }
+                println!("{} Cleared conversation history", "✓".green());
             } else {
-                println!("{} No changes to commit", "→".yellow());
+                return Err(anyhow!("Failed to clear conversation history"));
             }
+            
             Ok(())
         }
         MemoryAction::Print => {
